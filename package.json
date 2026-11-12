@@ -1,0 +1,15 @@
+{
+  "name": "durozen-leave-management-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Durozen Technologies - Employee Leave Management System",
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "start": "node scripts/dev.js",
+    "start:backend": "cd backend && node dist/src/main.js",
+    "dev:backend": "cd backend && npm run start:dev",
+    "start:frontend": "cd frontend && npx next start -p 3000",
+    "dev:frontend": "cd frontend && npx next dev -p 3000",
+    "test:srs": "node scratch/test-suite.js"
+  }
+}

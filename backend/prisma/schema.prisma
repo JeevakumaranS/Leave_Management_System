@@ -1,0 +1,160 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  EMPLOYEE
+  HR
+  DIRECTOR
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum LeaveType {
+  CASUAL_LEAVE
+  SICK_LEAVE
+  EMERGENCY_LEAVE
+  OTHER
+}
+
+enum DurationType {
+  FULL_DAY
+  HALF_DAY_FIRST_HALF
+  HALF_DAY_SECOND_HALF
+}
+
+enum DecisionMethod {
+  PORTAL
+  EMAIL
+}
+
+enum TokenStatus {
+  ACTIVE
+  USED
+  REVOKED
+  EXPIRED
+}
+
+enum NotificationType {
+  REQUEST
+  APPROVAL
+  REJECTION
+  CANCELLATION
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model Employee {
+  id               Int            @id @default(autoincrement())
+  employeeId       String         @unique @map("employee_id")
+  name             String         @map("employee_name")
+  email            String         @unique @map("email")
+  passwordHash     String         @map("password_hash")
+  role             Role           @default(EMPLOYEE)
+  status           EmployeeStatus @default(ACTIVE)
+  department       String         @default("General")
+  designation      String?
+  annualQuota      Float          @default(12.0) @map("annual_quota")
+  usedQuota        Float          @default(0.0) @map("used_quota")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  leaveRequests    LeaveRequest[]
+
+  @@map("employees")
+}
+
+model LeaveRequest {
+  id               Int             @id @default(autoincrement())
+  requestId        String          @unique @map("request_id")
+  employeeId       String          @map("employee_id")
+  employeeName     String          @map("employee_name")
+  employeeEmail    String          @map("employee_email")
+  managerEmail     String          @map("manager_email")
+  leaveType        LeaveType       @map("leave_type")
+  otherNote        String?         @map("other_note")
+  startDate        DateTime        @map("start_date")
+  endDate          DateTime        @map("end_date")
+  duration         DurationType    @default(FULL_DAY)
+  numberOfDays     Float           @default(1.0) @map("number_of_days")
+  reason           String
+  status           LeaveStatus     @default(PENDING)
+  submittedAt      DateTime        @default(now()) @map("submitted_at")
+  decidedBy        String?         @map("decided_by")
+  decidedByEmail   String?         @map("decided_by_email")
+  decidedAt        DateTime?       @map("decided_at")
+  decisionMethod   DecisionMethod? @map("decision_method")
+  rejectionRemarks String?         @map("rejection_remarks")
+
+  employee         Employee        @relation(fields: [employeeId], references: [employeeId], onDelete: Restrict)
+  tokens           ApprovalToken[]
+  notifications    NotificationLog[]
+
+  @@map("leave_requests")
+}
+
+model Approver {
+  id          Int            @id @default(autoincrement())
+  approverId  String         @unique @map("approver_id")
+  name        String
+  email       String         @unique
+  role        Role
+  status      EmployeeStatus @default(ACTIVE)
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  @@map("approvers")
+}
+
+model ApprovalToken {
+  id             Int          @id @default(autoincrement())
+  tokenId        String       @unique @map("token_id")
+  requestId      String       @map("request_id")
+  approverId     String       @map("approver_id")
+  approverEmail  String       @map("approver_email")
+  tokenHash      String       @unique @map("token_hash")
+  status         TokenStatus  @default(ACTIVE)
+  expiresAt      DateTime     @map("expires_at")
+  usedAt         DateTime?    @map("used_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  leaveRequest   LeaveRequest @relation(fields: [requestId], references: [requestId], onDelete: Cascade)
+
+  @@map("approval_tokens")
+}
+
+model NotificationLog {
+  id               Int              @id @default(autoincrement())
+  notificationId   String           @unique @map("notification_id")
+  requestId        String           @map("request_id")
+  recipientEmail   String           @map("recipient_email")
+  recipientRole    String?          @map("recipient_role")
+  notificationType NotificationType @map("notification_type")
+  subject          String
+  bodyPreview      String?          @map("body_preview")
+  deliveryStatus   DeliveryStatus   @default(SENT) @map("delivery_status")
+  sentAt           DateTime         @default(now()) @map("sent_at")
+  errorMessage     String?          @map("error_message")
+
+  leaveRequest     LeaveRequest     @relation(fields: [requestId], references: [requestId], onDelete: Cascade)
+
+  @@map("notification_logs")
+}
