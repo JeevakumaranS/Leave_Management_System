@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
 import { EmployeeStatus, Role } from '@prisma/client';
 
 export class CreateEmployeeDto {
@@ -30,9 +30,10 @@ export class CreateEmployeeDto {
   @IsString()
   designation?: string;
 
-  @IsOptional()
   @IsString()
-  password?: string;
+  @IsNotEmpty({ message: 'Initial password is required.' })
+  @Matches(/\S/, { message: 'Initial password cannot contain only spaces.' })
+  password: string;
 }
 
 export class UpdateEmployeeDto {

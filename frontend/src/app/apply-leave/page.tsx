@@ -8,20 +8,27 @@ import { useToast } from '../../components/Toast';
 import { Sidebar } from '../../components/Sidebar';
 import { Navbar } from '../../components/Navbar';
 import { CheckIcon, AlertTriangleIcon, PlusIcon } from '../../components/Icons';
+import { getReasonTextError, normalizeReasonText } from '../../lib/reason-validation';
+import { useLiveDataRefresh } from '../../lib/use-live-data-refresh';
 
 export default function ApplyLeavePage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const { success, error } = useToast();
+  const isEmployee = user?.role === 'EMPLOYEE';
 
   const [activeEmployees, setActiveEmployees] = useState<any[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(true);
+  const [approvers, setApprovers] = useState<
+    Array<{ employeeId: string; name: string; email: string; role: 'HR' | 'DIRECTOR' }>
+  >([]);
+  const [loadingApprovers, setLoadingApprovers] = useState(true);
 
   // Form State
   const [selectedEmpId, setSelectedEmpId] = useState('');
   const [selectedEmpName, setSelectedEmpName] = useState('');
   const [selectedEmpEmail, setSelectedEmpEmail] = useState('');
-  const [managerEmail, setManagerEmail] = useState('director@durozen.in');
+  const [managerEmail, setManagerEmail] = useState('');
   const [leaveType, setLeaveType] = useState('CASUAL_LEAVE');
   const [otherNote, setOtherNote] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -31,35 +38,64 @@ export default function ApplyLeavePage() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!authLoading && !user) {
+    if (authLoading) return;
+    if (!user) {
       router.push('/login');
       return;
     }
 
     loadActiveEmployees();
+    loadApprovers();
   }, [user, authLoading]);
 
-  const loadActiveEmployees = async () => {
-    setLoadingEmployees(true);
+  const loadActiveEmployees = async (silent = false) => {
+    if (!silent) setLoadingEmployees(true);
     try {
       const list = await api.employees.getActive();
       setActiveEmployees(list);
-
-      // Pre-select current logged in user if active in list
-      if (user) {
-        const found = list.find((e: any) => e.employeeId === user.employeeId);
-        if (found) {
-          selectEmployeeRecord(found);
-        } else if (list.length > 0) {
-          selectEmployeeRecord(list[0]);
-        }
+      const selectedEmployee =
+        list.find((employee: any) => employee.employeeId === selectedEmpId) ||
+        list.find((employee: any) => employee.employeeId === user?.employeeId) ||
+        list[0];
+      if (selectedEmployee) selectEmployeeRecord(selectedEmployee);
+      else {
+        setSelectedEmpId('');
+        setSelectedEmpName('');
+        setSelectedEmpEmail('');
       }
     } catch (err: any) {
-      error('Failed to load active employees list');
+      if (silent) throw err;
+      error(err.message || 'Failed to load active employees list');
     } finally {
-      setLoadingEmployees(false);
+      if (!silent) setLoadingEmployees(false);
     }
   };
+
+  const loadApprovers = async (silent = false) => {
+    if (!silent) setLoadingApprovers(true);
+    try {
+      const list = await api.employees.getApprovers();
+      setApprovers(list);
+      setManagerEmail((current) => {
+        if (list.some((approver) => approver.email === current)) return current;
+        return list.find((approver) => approver.role === 'DIRECTOR')?.email ?? list[0]?.email ?? '';
+      });
+    } catch (err: any) {
+      if (silent) throw err;
+      setApprovers([]);
+      setManagerEmail('');
+      error(err.message || 'Failed to load active managers and HR accounts');
+    } finally {
+      if (!silent) setLoadingApprovers(false);
+    }
+  };
+
+  useLiveDataRefresh(
+    async () => {
+      await Promise.all([loadActiveEmployees(true), loadApprovers(true)]);
+    },
+    Boolean(user),
+  );
 
   // SRS 4.2: Selecting either ID or Name populates the corresponding field & email
   const selectEmployeeRecord = (emp: any) => {
@@ -93,9 +129,9 @@ export default function ApplyLeavePage() {
     if (!managerEmail) errors.push('Manager Email is mandatory.');
     if (!leaveType) errors.push('Leave Type is mandatory.');
 
-    // SRS 4.4: Other Leave Note mandatory only when Other is selected
-    if (leaveType === 'OTHER' && !otherNote.trim()) {
-      errors.push('Other Leave Note is mandatory when Leave Type is "Other" (BR-08).');
+    if (leaveType === 'OTHER') {
+      const otherNoteError = getReasonTextError(otherNote, 'Other Leave Note');
+      if (otherNoteError) errors.push(otherNoteError);
     }
 
     if (!startDate) errors.push('Start Date is mandatory.');
@@ -105,25 +141,24 @@ export default function ApplyLeavePage() {
       const s = new Date(startDate);
       const e = new Date(endDate);
       if (e < s) {
-        errors.push('End Date cannot be earlier than Start Date (BR-05).');
+        errors.push('End Date cannot be earlier than Start Date.');
       }
 
       const isSameDate = startDate === endDate;
 
       // Half day allowed ONLY when Start Date and End Date are identical
       if ((duration === 'HALF_DAY_FIRST_HALF' || duration === 'HALF_DAY_SECOND_HALF') && !isSameDate) {
-        errors.push('Half-day leave is allowed only when Start Date and End Date are identical (BR-06).');
+        errors.push('Half-day leave is allowed only when Start Date and End Date are identical.');
       }
 
       // If multiple dates are selected, only Full Day can be selected
       if (!isSameDate && duration !== 'FULL_DAY') {
-        errors.push('If multiple dates are selected, only Full Day can be selected (SRS 4.5).');
+        errors.push('If multiple dates are selected, only Full Day can be selected.');
       }
     }
 
-    if (!reason.trim()) {
-      errors.push('Reason for Leave is mandatory and cannot be empty.');
-    }
+    const reasonError = getReasonTextError(reason, 'Reason for Leave');
+    if (reasonError) errors.push(reasonError);
 
     return errors;
   }, [
@@ -153,6 +188,7 @@ export default function ApplyLeavePage() {
     const diff = Math.abs(e.getTime() - s.getTime());
     return Math.ceil(diff / (1000 * 60 * 60 * 24)) + 1;
   }, [startDate, endDate, duration]);
+  const isSingleDayLeave = Boolean(startDate && endDate && startDate === endDate);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -170,14 +206,14 @@ export default function ApplyLeavePage() {
         employeeEmail: selectedEmpEmail,
         managerEmail,
         leaveType,
-        otherNote: leaveType === 'OTHER' ? otherNote : undefined,
+        otherNote: leaveType === 'OTHER' ? normalizeReasonText(otherNote) : undefined,
         startDate,
         endDate,
         duration,
-        reason,
+        reason: normalizeReasonText(reason),
       });
 
-      success(`Leave request ${result.requestId} submitted successfully! Notifications sent to Director and HR.`);
+      success(`Leave request ${result.requestId} submitted successfully.`);
       router.push('/my-leaves');
     } catch (err: any) {
       error(err.message || 'Failed to submit leave request');
@@ -211,75 +247,108 @@ export default function ApplyLeavePage() {
                 </h3>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px' }}>
-                  {/* Field 1: Employee ID Dropdown */}
+                  {/* Field 1: Employee ID */}
                   <div className="form-group">
                     <label className="form-label">
-                      Employee ID <span className="required">*</span>
+                      Employee ID
                     </label>
-                    <select
-                      className="form-select"
-                      value={selectedEmpId}
-                      onChange={(e) => handleIdChange(e.target.value)}
-                      disabled={loadingEmployees || (user?.role === 'EMPLOYEE')}
-                    >
-                      {activeEmployees.map((emp) => (
-                        <option key={emp.employeeId} value={emp.employeeId}>
-                          {emp.employeeId} ({emp.name})
-                        </option>
-                      ))}
-                    </select>
-                    <div className="form-helper">SRS 4.1: Active employee IDs from database</div>
+                    {isEmployee ? (
+                      <input
+                        className="form-input"
+                        value={selectedEmpId}
+                        disabled
+                        style={{ backgroundColor: '#F6F8FB', color: '#7E8798', cursor: 'not-allowed' }}
+                      />
+                    ) : (
+                      <select
+                        className="form-select"
+                        value={selectedEmpId}
+                        onChange={(e) => handleIdChange(e.target.value)}
+                        disabled={loadingEmployees}
+                      >
+                        {activeEmployees.map((emp) => (
+                          <option key={emp.employeeId} value={emp.employeeId}>
+                            {emp.employeeId} ({emp.name})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <div className="form-helper">Active employee ID</div>
                   </div>
 
-                  {/* Field 2: Employee Name Dropdown */}
+                  {/* Field 2: Employee Name */}
                   <div className="form-group">
                     <label className="form-label">
-                      Employee Name <span className="required">*</span>
+                      Employee Name
                     </label>
-                    <select
-                      className="form-select"
-                      value={selectedEmpName}
-                      onChange={(e) => handleNameChange(e.target.value)}
-                      disabled={loadingEmployees || (user?.role === 'EMPLOYEE')}
-                    >
-                      {activeEmployees.map((emp) => (
-                        <option key={emp.employeeId} value={emp.name}>
-                          {emp.name}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="form-helper">SRS 4.2: Automatically synced with Employee ID</div>
+                    {isEmployee ? (
+                      <input
+                        className="form-input"
+                        value={selectedEmpName}
+                        disabled
+                        style={{ backgroundColor: '#F6F8FB', color: '#7E8798', cursor: 'not-allowed' }}
+                      />
+                    ) : (
+                      <select
+                        className="form-select"
+                        value={selectedEmpName}
+                        onChange={(e) => handleNameChange(e.target.value)}
+                        disabled={loadingEmployees}
+                      >
+                        {activeEmployees.map((emp) => (
+                          <option key={emp.employeeId} value={emp.name}>
+                            {emp.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <div className="form-helper">
+                      {isEmployee ? 'Synced with your account' : 'Synced with selected Employee ID'}
+                    </div>
                   </div>
 
                   {/* Field 3: Employee Email (Locked/Validated) */}
                   <div className="form-group">
                     <label className="form-label">
-                      Employee Email ID <span className="required">*</span>
+                      Employee Email ID
                     </label>
                     <input
                       type="email"
                       className="form-input"
                       value={selectedEmpEmail}
                       readOnly
-                      style={{ backgroundColor: '#F6F8FB', color: '#7E8798', cursor: 'not-allowed' }}
+                      disabled={isEmployee}
+                      style={{
+                        backgroundColor: '#F6F8FB',
+                        color: '#7E8798',
+                        cursor: 'not-allowed',
+                      }}
                     />
                     <div className="form-helper">Registered corporate email address</div>
                   </div>
 
-                  {/* Field 4: Manager Email ID Dropdown */}
+                  {/* Field 4: Manager / HR Name and Email */}
                   <div className="form-group">
                     <label className="form-label">
-                      Manager Email ID <span className="required">*</span>
+                      Manager / HR Name &amp; Email <span className="required">*</span>
                     </label>
                     <select
                       className="form-select"
                       value={managerEmail}
+                      required
+                      disabled={loadingApprovers || approvers.length === 0}
                       onChange={(e) => setManagerEmail(e.target.value)}
                     >
-                      <option value="director@durozen.in">director@durozen.in (Director Administrator)</option>
-                      <option value="hr@durozen.in">hr@durozen.in (HR Administrator)</option>
+                      <option value="">
+                        {loadingApprovers ? 'Loading managers and HR...' : 'No active managers or HR found'}
+                      </option>
+                      {approvers.map((approver) => (
+                        <option key={approver.employeeId} value={approver.email}>
+                          {approver.name} ({approver.role === 'DIRECTOR' ? 'Director' : 'HR'}) — {approver.email}
+                        </option>
+                      ))}
                     </select>
-                    <div className="form-helper">SRS 4.3: Initial options director@durozen.in & hr@durozen.in</div>
+                    <div className="form-helper">Select an active manager or HR account.</div>
                   </div>
                 </div>
               </div>
@@ -342,16 +411,19 @@ export default function ApplyLeavePage() {
                       placeholder="Specify the exact nature of this other leave category..."
                       value={otherNote}
                       onChange={(e) => setOtherNote(e.target.value)}
+                      onBlur={(e) => setOtherNote(normalizeReasonText(e.target.value))}
+                      minLength={3}
+                      maxLength={250}
                       autoFocus
                     />
                     <div className="form-helper" style={{ color: '#D49422' }}>
-                      SRS Section 4.4 & BR-08: Mandatory short answer when Leave Type is "Other".
+                      Enter 3–250 characters using letters, numbers, spaces, or basic punctuation.
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* SECTION 3: DATES & DURATION VALIDATIONS (SRS 4.5) */}
+              {/* SECTION 3: DATES & DURATION VALIDATIONS */}
               <div style={{ marginBottom: '24px', paddingBottom: '18px', borderBottom: '1px solid #E8EDF3' }}>
                 <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#17223A', marginBottom: '16px' }}>
                   3. Dates & Duration Specification
@@ -367,10 +439,11 @@ export default function ApplyLeavePage() {
                       className="form-input"
                       value={startDate}
                       onChange={(e) => {
-                        setStartDate(e.target.value);
-                        if (!endDate || endDate < e.target.value) {
-                          setEndDate(e.target.value);
-                        }
+                        const nextStartDate = e.target.value;
+                        const nextEndDate = !endDate || endDate < nextStartDate ? nextStartDate : endDate;
+                        setStartDate(nextStartDate);
+                        setEndDate(nextEndDate);
+                        if (nextStartDate !== nextEndDate) setDuration('FULL_DAY');
                       }}
                     />
                   </div>
@@ -384,9 +457,13 @@ export default function ApplyLeavePage() {
                       className="form-input"
                       value={endDate}
                       min={startDate}
-                      onChange={(e) => setEndDate(e.target.value)}
+                      onChange={(e) => {
+                        const nextEndDate = e.target.value;
+                        setEndDate(nextEndDate);
+                        if (nextEndDate !== startDate) setDuration('FULL_DAY');
+                      }}
                     />
-                    <div className="form-helper">Equal to or later than Start Date (BR-05)</div>
+                    <div className="form-helper">Must be equal to or later than Start Date</div>
                   </div>
 
                   <div className="form-group">
@@ -396,14 +473,21 @@ export default function ApplyLeavePage() {
                     <select
                       className="form-select"
                       value={duration}
+                      disabled={!isSingleDayLeave}
                       onChange={(e) => setDuration(e.target.value)}
                     >
                       <option value="FULL_DAY">Full Day</option>
-                      <option value="HALF_DAY_FIRST_HALF">Half Day – 1st Half</option>
-                      <option value="HALF_DAY_SECOND_HALF">Half Day – 2nd Half</option>
+                      {isSingleDayLeave && (
+                        <>
+                          <option value="HALF_DAY_FIRST_HALF">Half Day – 1st Half</option>
+                          <option value="HALF_DAY_SECOND_HALF">Half Day – 2nd Half</option>
+                        </>
+                      )}
                     </select>
                     <div className="form-helper">
-                      Half-day allowed ONLY when Start Date and End Date are identical (BR-06)
+                      {isSingleDayLeave
+                        ? 'Half-day options are available for a one-day leave.'
+                        : 'Select the same start and end date to enable half-day options.'}
                     </div>
                   </div>
                 </div>
@@ -416,7 +500,7 @@ export default function ApplyLeavePage() {
                 )}
               </div>
 
-              {/* SECTION 4: REASON FOR LEAVE (SRS 4.1) */}
+              {/* SECTION 4: REASON FOR LEAVE */}
               <div style={{ marginBottom: '24px' }}>
                 <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#17223A', marginBottom: '16px' }}>
                   4. Reason for Leave
@@ -432,8 +516,13 @@ export default function ApplyLeavePage() {
                     placeholder="Provide a detailed and professional explanation for this leave application..."
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
+                    onBlur={(e) => setReason(normalizeReasonText(e.target.value))}
+                    minLength={3}
+                    maxLength={250}
                   />
-                  <div className="form-helper">Mandatory per SRS 4.1; cannot be empty.</div>
+                  <div className="form-helper">
+                    Enter 3–250 characters using letters, numbers, spaces, or basic punctuation.
+                  </div>
                 </div>
               </div>
 

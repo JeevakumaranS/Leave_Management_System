@@ -4,6 +4,7 @@ node_modules/
 # Build output
 /backend/dist/
 /frontend/.next/
+/frontend/.next-dev/
 /frontend/out/
 /coverage/
 *.tsbuildinfo

@@ -4,16 +4,13 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { api } from './api';
 
 export interface User {
-  id: number;
+  id: string;
   employeeId: string;
   name: string;
   email: string;
   role: 'EMPLOYEE' | 'HR' | 'DIRECTOR';
   department?: string;
   designation?: string;
-  annualQuota?: number;
-  usedQuota?: number;
-  remainingQuota?: number;
 }
 
 interface AuthContextType {
@@ -21,7 +18,6 @@ interface AuthContextType {
   token: string | null;
   loading: boolean;
   login: (identifier: string, pass: string) => Promise<void>;
-  quickLogin: (role: 'EMPLOYEE' | 'HR' | 'DIRECTOR') => Promise<void>;
   logout: () => void;
   refreshProfile: () => Promise<void>;
   isAdmin: boolean;
@@ -73,14 +69,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('durozen_user', JSON.stringify(res.user));
   };
 
-  const quickLogin = async (role: 'EMPLOYEE' | 'HR' | 'DIRECTOR') => {
-    const res = await api.auth.quickLogin(role);
-    setToken(res.accessToken);
-    setUser(res.user);
-    localStorage.setItem('durozen_token', res.accessToken);
-    localStorage.setItem('durozen_user', JSON.stringify(res.user));
-  };
-
   const logout = () => {
     setUser(null);
     setToken(null);
@@ -110,7 +98,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         token,
         loading,
         login,
-        quickLogin,
         logout,
         refreshProfile,
         isAdmin,

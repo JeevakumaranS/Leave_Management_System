@@ -1,21 +1,26 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const config = app.get(ConfigService);
+  const port = Number(config.getOrThrow<string>('PORT'));
+  const frontendOrigin = new URL(config.getOrThrow<string>('APP_URL')).origin;
+  const apiPrefix = 'api';
+
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('PORT must be a valid TCP port.');
+  }
 
   app.enableCors({
-    origin: [
-      'http://localhost:3000',
-      'http://127.0.0.1:3000',
-      'https://leave.durozen.in',
-    ],
+    origin: frontendOrigin,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
 
-  app.setGlobalPrefix('api');
+  app.setGlobalPrefix(apiPrefix);
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -25,11 +30,10 @@ async function bootstrap() {
     }),
   );
 
-  const port = process.env.PORT || 4000;
   await app.listen(port);
   console.log(`====================================================`);
   console.log(` Durozen Technologies - Leave Management System API`);
-  console.log(` Server running on http://localhost:${port}/api`);
+  console.log(` API listening on port ${port} with prefix /${apiPrefix}`);
   console.log(`====================================================`);
 }
 bootstrap();

@@ -8,6 +8,9 @@ import { useToast } from '../../../components/Toast';
 import { Sidebar } from '../../../components/Sidebar';
 import { Navbar } from '../../../components/Navbar';
 import { Modal } from '../../../components/Modal';
+import { PAGE_SIZE, PaginationControls } from '../../../components/PaginationControls';
+import { formatDateTime } from '../../../lib/date';
+import { useLiveDataRefresh } from '../../../lib/use-live-data-refresh';
 import {
   BellIcon,
   RefreshIcon,
@@ -21,9 +24,11 @@ export default function NotificationsPage() {
   const { success, error } = useToast();
 
   const [logs, setLogs] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selectedLog, setSelectedLog] = useState<any>(null);
-  const [retryingId, setRetryingId] = useState<number | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading) {
@@ -35,28 +40,37 @@ export default function NotificationsPage() {
         router.push('/dashboard');
         return;
       }
-      loadLogs();
+      loadLogs(page);
     }
-  }, [user, authLoading, isAdmin]);
+  }, [user, authLoading, isAdmin, page]);
 
-  const loadLogs = async () => {
-    setLoading(true);
+  const loadLogs = async (targetPage = page, silent = false) => {
+    if (!silent) setLoading(true);
     try {
-      const data = await api.notifications.getLogs();
-      setLogs(data);
+      const data = await api.notifications.getLogs({ page: targetPage, limit: PAGE_SIZE });
+      setLogs(data.items);
+      setTotal(data.total);
+      setPage(data.page);
     } catch (err: any) {
+      if (silent) throw err;
       error(err.message || 'Failed to load notification audit trail');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
-  const handleRetry = async (id: number) => {
+  useLiveDataRefresh(() => loadLogs(page, true), Boolean(user && isAdmin));
+
+  const handleRetry = async (id: string) => {
     setRetryingId(id);
     try {
-      await api.notifications.retry(id);
-      success('Email notification resent successfully.');
-      loadLogs();
+      const result = await api.notifications.retry(id);
+      if (result.deliveryStatus === 'SENT') {
+        success('Email notification resent successfully.');
+      } else {
+        error(result.errorMessage || 'Email retry failed.');
+      }
+      await loadLogs();
     } catch (err: any) {
       error(err.message || 'Retry failed');
     } finally {
@@ -77,11 +91,11 @@ export default function NotificationsPage() {
             <div>
               <h1 className="page-title">Automated Email Notification Audit Logs</h1>
               <p className="page-subtitle">
-                Complete delivery tracking for leave requests, Director/HR notifications, and employee approval emails (SRS Section 6 & 10.5)
+                Complete delivery tracking for leave requests, Director/HR notifications, and employee approval emails
               </p>
             </div>
 
-            <button onClick={loadLogs} className="btn btn-secondary btn-sm" title="Refresh">
+            <button onClick={() => loadLogs()} className="btn btn-secondary btn-sm" title="Refresh">
               <RefreshIcon size={14} /> Refresh Logs
             </button>
           </div>
@@ -149,7 +163,7 @@ export default function NotificationsPage() {
                       </td>
                       <td>
                         <div style={{ fontSize: '12px', color: '#64748b' }}>
-                          {new Date(log.sentAt).toLocaleString()}
+                          {formatDateTime(log.sentAt)}
                         </div>
                       </td>
                       <td style={{ textAlign: 'right' }}>
@@ -177,6 +191,9 @@ export default function NotificationsPage() {
               </table>
             </div>
           )}
+          {!loading && logs.length > 0 && (
+            <PaginationControls currentPage={page} totalItems={total} onPageChange={setPage} />
+          )}
         </main>
       </div>
 
@@ -196,15 +213,23 @@ export default function NotificationsPage() {
             <div style={{ padding: '12px', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                 <strong>{selectedLog.subject}</strong>
-                <span className="badge badge-approved">{selectedLog.deliveryStatus}</span>
+                <span className={`badge ${selectedLog.deliveryStatus === 'SENT' ? 'badge-approved' : 'badge-rejected'}`}>
+                  {selectedLog.deliveryStatus}
+                </span>
               </div>
               <div style={{ fontSize: '12.5px', color: '#64748b' }}>
                 <strong>To:</strong> {selectedLog.recipientEmail} ({selectedLog.recipientRole}) • <strong>Request ID:</strong> {selectedLog.requestId}
               </div>
               <div style={{ fontSize: '12.5px', color: '#64748b', marginTop: '4px' }}>
-                <strong>Timestamp:</strong> {new Date(selectedLog.sentAt).toLocaleString()}
+                <strong>Timestamp:</strong> {formatDateTime(selectedLog.sentAt)}
               </div>
             </div>
+
+            {selectedLog.errorMessage && (
+              <div style={{ padding: '12px', background: '#fef2f2', borderRadius: '6px', border: '1px solid #fecaca', marginBottom: '16px', color: '#b91c1c', fontSize: '13px' }}>
+                <strong>Delivery error:</strong> {selectedLog.errorMessage}
+              </div>
+            )}
 
             <div style={{ marginBottom: '16px' }}>
               <label className="form-label">Message Content Summary:</label>

@@ -1,6 +1,6 @@
 # Durozen Technologies - Employee Leave Management System
 
-A centralized, secure, enterprise-grade Employee Leave Management System built strictly according to the **Software Requirements Specification (SRS v1.0)** for **Durozen Technologies Private Limited** (`leave.durozen.in`).
+A centralized, secure, enterprise-grade Employee Leave Management System built strictly according to the **Software Requirements Specification (SRS v1.0)** for **Durozen Technologies Private Limited**.
 
 ---
 
@@ -19,13 +19,11 @@ All accounts use password: `Password@123`
 
 | Role | Employee ID | Email | Permissions & Purpose |
 | :--- | :--- | :--- | :--- |
-| **Director** | `DIR-001` | `director@durozen.in` | Executive Approver, Full Employee & Leave Management, Analytics |
-| **HR Administrator** | `HR-001` | `hr@durozen.in` | HR Approver, Employee Directory Management, Approvals, Reports |
-| **Employee** | `EMP-101` | `sarah.jenkins@durozen.in` | Active Employee (Engineering): Apply Leave, View History, Cancel Pending |
-| **Employee** | `EMP-102` | `rajesh.kumar@durozen.in` | Active Employee (Frontend): Leave tracking |
-| **Inactive Employee** | `EMP-105` | `michael.scott@durozen.in` | Deactivated account (used to verify BR-04 & TC-19 access block) |
-
-> **Pro Tip:** In the top navigation bar, use the **"Switch Persona: [Director] [HR Admin] [Employee]"** button to instantly switch between roles with a single click!
+| **Director** | `DIR-001` | `director@example.test` | Executive Approver, Full Employee & Leave Management, Analytics |
+| **HR Administrator** | `HR-001` | `hr@example.test` | HR Approver, Employee Directory Management, Approvals, Reports |
+| **Employee** | `EMP-101` | `sarah.jenkins@example.test` | Active Employee (Engineering): Apply Leave, View History, Cancel Pending |
+| **Employee** | `EMP-102` | `rajesh.kumar@example.test` | Active Employee (Frontend): Leave tracking |
+| **Inactive Employee** | `EMP-105` | `michael.scott@example.test` | Deactivated account (used to verify BR-04 & TC-19 access block) |
 
 ---
 
@@ -43,7 +41,7 @@ All accounts use password: `Password@123`
 
 ### 3. Leave Application Module (SRS Section 4)
 - **Dynamic Field Consistency**: Selecting either Employee ID or Name automatically populates the other and sets the registered email (SRS 4.2).
-- **Manager Email ID**: Dropdown pre-populated with `director@durozen.in` and `hr@durozen.in` (SRS 4.3).
+- **Manager Email ID**: Dropdown populated from active HR and Director accounts in the database (SRS 4.3).
 - **Leave Categories**: Casual Leave (PL), Sick Leave, Emergency Leave, Other. Selecting "Other" dynamically shows and mandates the "Other Leave Note" field (SRS 4.4, BR-08).
 - **Strict Date & Duration Validation**:
   - End Date must be $\ge$ Start Date (BR-05).
@@ -64,7 +62,6 @@ All accounts use password: `Password@123`
 
 ### 6. Leave Calendar & Analytics (SRS Section 7, 8, 9)
 - Interactive monthly company leave calendar.
-- Employee-wise quota tracking (12 annual days quota).
 - Monthly trend charts and Leave-type utilization breakdown.
 - 1-Click CSV export.
 
@@ -72,16 +69,35 @@ All accounts use password: `Password@123`
 
 ## 🚀 Running the System
 
-### Backend (NestJS on `http://localhost:4000/api`)
+### Development mode
+Run the application from the repository root with automatic backend restarts and frontend hot reload on source changes:
+```bash
+npm run dev
+```
+The watcher monitors application source code. Changes to environment files, dependencies, or the Prisma schema still require the appropriate restart, install, or Prisma client generation.
+
+Use `npm start` to run the prebuilt production backend and frontend.
+
+### Backend (NestJS)
+Configure `backend/.env` using `backend/.env.example`, including `PORT`, `DATABASE_URL`, and `JWT_SECRET`.
+To create a Director account without resetting existing database data, run `npm run create:director` from the `backend` directory and follow the prompts. The password is entered without being displayed.
 ```bash
 cd backend
 npm run build
 node dist/src/main.js
 ```
 
-### Frontend (Next.js on `http://localhost:3000`)
+### Frontend (Next.js)
+Configure `frontend/.env.local` with `NEXT_PUBLIC_API_URL`, using `frontend/.env.example` as a template.
 ```bash
 cd frontend
 npm run build
 npm start
 ```
+
+### Docker Compose
+Copy the root `.env.example` to `.env`, then copy `backend/.env.example` to `backend/.env`. Set a URL-safe PostgreSQL password in the root `.env` and a strong `JWT_SECRET` in `backend/.env`.
+```bash
+docker compose up --build
+```
+The frontend is available at `http://localhost:3000` and the API at `http://localhost:4000/api`. The backend applies Prisma migrations before starting, and PostgreSQL data is kept in the `postgres-data` volume. Configure `APP_URL` and `NEXT_PUBLIC_API_URL` in the root `.env` to match the public frontend and API addresses before deployment. Do not use sample credentials in production.

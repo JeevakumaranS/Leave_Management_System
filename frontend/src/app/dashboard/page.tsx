@@ -6,9 +6,12 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '../../lib/auth-context';
 import { api } from '../../lib/api';
 import { useToast } from '../../components/Toast';
+import { useLiveDataRefresh } from '../../lib/use-live-data-refresh';
 import { Sidebar } from '../../components/Sidebar';
 import { Navbar } from '../../components/Navbar';
 import { Modal } from '../../components/Modal';
+import { formatDate } from '../../lib/date';
+import { getReasonTextError, normalizeReasonText } from '../../lib/reason-validation';
 import {
   UsersIcon,
   ClockIcon,
@@ -46,8 +49,8 @@ export default function DashboardPage() {
     }
   }, [user, authLoading]);
 
-  const loadDashboardData = async () => {
-    setLoading(true);
+  const loadDashboardData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       if (isAdmin) {
         const stats = await api.reports.getAdminStats();
@@ -57,11 +60,14 @@ export default function DashboardPage() {
         setEmpStats(stats);
       }
     } catch (err: any) {
+      if (silent) throw err;
       error(err.message || 'Failed to load dashboard metrics');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  useLiveDataRefresh(() => loadDashboardData(true), Boolean(user));
 
   const handleOpenDecisionModal = (req: any, action: 'APPROVE' | 'REJECT') => {
     setSelectedRequest(req);
@@ -71,22 +77,26 @@ export default function DashboardPage() {
 
   const handleConfirmDecision = async () => {
     if (!selectedRequest) return;
-    if (decisionAction === 'REJECT' && !rejectionRemarks.trim()) {
-      error('Please enter remarks explaining the rejection decision (PD-04).');
-      return;
+    if (decisionAction === 'REJECT') {
+      const remarksError = getReasonTextError(rejectionRemarks, 'Rejection remarks');
+      if (remarksError) {
+        error(remarksError);
+        return;
+      }
     }
 
     setSubmittingDecision(true);
     try {
       await api.approvals.decidePortal(selectedRequest.requestId, {
         action: decisionAction,
-        rejectionRemarks: decisionAction === 'REJECT' ? rejectionRemarks : undefined,
+        rejectionRemarks:
+          decisionAction === 'REJECT' ? normalizeReasonText(rejectionRemarks) : undefined,
       });
 
       success(
         `Leave request ${selectedRequest.requestId} has been ${
           decisionAction === 'APPROVE' ? 'APPROVED' : 'REJECTED'
-        }. Automated email dispatched.`,
+        }.`,
       );
       setSelectedRequest(null);
       loadDashboardData();
@@ -111,18 +121,30 @@ export default function DashboardPage() {
         <header className="dashboard-header">
           <div>
             <p className="eyebrow">
-              {isAdmin ? 'LEAVE ADMINISTRATION • DUROZEN OVERVIEW' : 'EMPLOYEE WORKSPACE'}
+              {isAdmin ? 'LEAVE ADMINISTRATION' : 'EMPLOYEE WORKSPACE'}
             </p>
-            <h1>{isAdmin ? `${user.role === 'DIRECTOR' ? 'Director' : 'HR'} Dashboard` : 'My Leave Dashboard'}</h1>
-            <p className="subtitle">
-              {isAdmin
-                ? 'Centralized tracking of employee leave applications, approval queues, and team capacity.'
-                : `Welcome back, ${user.name} • ${user.department || 'Durozen Team Member'}`}
-            </p>
+            {isAdmin ? (
+              <>
+                <h1>{`${user.role === 'DIRECTOR' ? 'Director' : 'HR'} Dashboard`}</h1>
+                <p className="subtitle">
+                  Centralized tracking of employee leave applications, approval queues, and team capacity.
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 style={{ fontWeight: 800 }}>
+                  Welcome back, {user.name}
+                  {user.department ? ` • ${user.department}` : ''}
+                </h1>
+                <p className="subtitle">
+                  Track your leave balance, view upcoming time off, and manage submitted requests.
+                </p>
+              </>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <button onClick={loadDashboardData} className="secondary-action" title="Refresh metrics">
+            <button onClick={() => loadDashboardData()} className="secondary-action" title="Refresh metrics">
               <RefreshIcon size={14} /> Refresh
             </button>
             {user.role === 'EMPLOYEE' ? (
@@ -202,40 +224,15 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Dark Leave Utilization Summary Strip (Replicating Revenue Strip) */}
-            <div className="revenue-strip">
-              <div>
-                <span>Absences Today</span>
-                <strong>{adminStats.todayOnLeaveCount} Staff</strong>
-              </div>
-              <div>
-                <span>Pending Approvals</span>
-                <strong style={{ color: adminStats.pendingLeaves > 0 ? '#ffd488' : '#ffffff' }}>
-                  {adminStats.pendingLeaves} Action Item{adminStats.pendingLeaves !== 1 ? 's' : ''}
-                </strong>
-              </div>
-              <div>
-                <span>Approved Volume</span>
-                <strong>{adminStats.approvedLeaves} Total Approved</strong>
-              </div>
-              <div>
-                <span>Active Work Force</span>
-                <strong>{adminStats.activeEmployees} Team Members</strong>
-              </div>
-            </div>
-
             {/* Pending Approvals Table */}
             <section className="panel">
               <div className="panel-head">
                 <div>
                   <h2>Pending Leave Requests Requiring Decision</h2>
                   <p>
-                    Per SRS 5.1, either HR or Director can approve or reject. The first decision recorded becomes final.
+                    Either HR or Director can approve or reject. The first decision recorded becomes final.
                   </p>
                 </div>
-                <Link href="/admin/pending" className="secondary-action">
-                  View Full Queue ({adminStats.pendingLeaves})
-                </Link>
               </div>
 
               {adminStats.recentPending.length === 0 ? (
@@ -278,8 +275,8 @@ export default function DashboardPage() {
                           </td>
                           <td>
                             <div style={{ fontSize: '12px' }}>
-                              {new Date(r.startDate).toLocaleDateString()}
-                              {r.startDate !== r.endDate ? ` to ${new Date(r.endDate).toLocaleDateString()}` : ''}
+                              {formatDate(r.startDate)}
+                              {r.startDate !== r.endDate ? ` to ${formatDate(r.endDate)}` : ''}
                             </div>
                           </td>
                           <td style={{ maxWidth: '240px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -311,78 +308,11 @@ export default function DashboardPage() {
               )}
             </section>
 
-            {/* Quick Navigation Panels */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-              <section className="panel" style={{ marginBottom: 0 }}>
-                <h2>Employee Directory</h2>
-                <p style={{ marginBottom: '16px' }}>
-                  Add new employees, activate or deactivate accounts, and update profiles.
-                </p>
-                <Link href="/admin/employees" className="secondary-action" style={{ width: '100%', justifyContent: 'center' }}>
-                  Manage Directory
-                </Link>
-              </section>
-
-              <section className="panel" style={{ marginBottom: 0 }}>
-                <h2>Reports & Analytics</h2>
-                <p style={{ marginBottom: '16px' }}>
-                  View employee leave usage breakdowns, monthly trends, and export CSV reports.
-                </p>
-                <Link href="/admin/reports" className="secondary-action" style={{ width: '100%', justifyContent: 'center' }}>
-                  Open Reports Hub
-                </Link>
-              </section>
-
-              <section className="panel" style={{ marginBottom: 0 }}>
-                <h2>Company Leave Calendar</h2>
-                <p style={{ marginBottom: '16px' }}>
-                  Visual monthly calendar displaying scheduled absences across all departments.
-                </p>
-                <Link href="/calendar" className="secondary-action" style={{ width: '100%', justifyContent: 'center' }}>
-                  View Calendar
-                </Link>
-              </section>
-            </div>
           </>
         ) : (
           /* ========================= REGULAR EMPLOYEE VIEW ========================= */
           empStats && (
             <>
-              {/* Employee Summary Dark Strip */}
-              <div
-                style={{
-                  background: 'linear-gradient(145deg, #173e48 0%, #174955 70%, #214e58 100%)',
-                  borderRadius: '6px',
-                  color: '#ffffff',
-                  padding: '24px 28px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  flexWrap: 'wrap',
-                  gap: '18px',
-                  marginBottom: '20px',
-                }}
-              >
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#d5ad78', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
-                    Annual Leave Allowance (Casual / Paid Leave)
-                  </span>
-                  <div style={{ fontSize: '32px', fontWeight: 800, marginTop: '4px' }}>
-                    {empStats.employee.remainingQuota}{' '}
-                    <span style={{ fontSize: '16px', fontWeight: 500, color: '#c7d7d9' }}>
-                      / {empStats.employee.annualQuota} Days Available
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#c7d7d9', marginTop: '4px' }}>
-                    Used: <strong>{empStats.employee.usedQuota} days</strong> • Quota: <strong>{empStats.employee.annualQuota} days</strong>
-                  </div>
-                </div>
-
-                <Link href="/apply-leave" className="primary" style={{ backgroundColor: '#2769d7', color: '#ffffff' }}>
-                  <PlusIcon size={16} /> Apply for leave
-                </Link>
-              </div>
-
               {/* Status Metrics */}
               <div className="live-metrics">
                 <div className="metric blue">
@@ -431,9 +361,9 @@ export default function DashboardPage() {
 
                 <div className="metric teal">
                   <div className="metric-info">
-                    <p>Remaining</p>
-                    <h2 style={{ color: '#287c78' }}>{empStats.employee.remainingQuota}</h2>
-                    <small>Days in quota</small>
+                    <p>Cancelled</p>
+                    <h2 style={{ color: '#287c78' }}>{empStats.stats.cancelledRequests}</h2>
+                    <small>Withdrawn requests</small>
                   </div>
                   <span>
                     <CalendarIcon size={18} />
@@ -481,8 +411,8 @@ export default function DashboardPage() {
                             </td>
                             <td>{r.leaveType.replace('_', ' ')}</td>
                             <td>
-                              {new Date(r.startDate).toLocaleDateString()}
-                              {r.startDate !== r.endDate ? ` to ${new Date(r.endDate).toLocaleDateString()}` : ''}
+                              {formatDate(r.startDate)}
+                              {r.startDate !== r.endDate ? ` to ${formatDate(r.endDate)}` : ''}
                             </td>
                             <td>{r.numberOfDays} Day(s)</td>
                             <td>
@@ -491,10 +421,17 @@ export default function DashboardPage() {
                               </span>
                             </td>
                             <td>
-                              {r.decidedBy ? (
+                              {r.status === 'CANCELLED' ? (
+                                <div style={{ fontSize: '11.5px', color: '#758195' }}>
+                                  <div style={{ fontWeight: 600 }}>Cancelled by Employee</div>
+                                  {r.decidedAt && (
+                                    <div style={{ color: '#94A3B8' }}>{formatDate(r.decidedAt)}</div>
+                                  )}
+                                </div>
+                              ) : r.decidedBy ? (
                                 <div style={{ fontSize: '11.5px' }}>
                                   <div>{r.decidedBy}</div>
-                                  <div style={{ color: '#758195' }}>{new Date(r.decidedAt).toLocaleDateString()}</div>
+                                  <div style={{ color: '#758195' }}>{formatDate(r.decidedAt)}</div>
                                 </div>
                               ) : (
                                 <span style={{ color: '#758195', fontSize: '11.5px' }}>Awaiting review</span>
@@ -548,7 +485,7 @@ export default function DashboardPage() {
                 <strong>Employee:</strong> {selectedRequest.employeeName} ({selectedRequest.employeeId})
               </div>
               <div style={{ fontSize: '12.5px', color: '#17223a' }}>
-                <strong>Dates:</strong> {new Date(selectedRequest.startDate).toLocaleDateString()} to {new Date(selectedRequest.endDate).toLocaleDateString()} ({selectedRequest.numberOfDays} days)
+                <strong>Dates:</strong> {formatDate(selectedRequest.startDate)} to {formatDate(selectedRequest.endDate)} ({selectedRequest.numberOfDays} days)
               </div>
               <div style={{ fontSize: '12.5px', marginTop: '4px', color: '#758195' }}>
                 <strong>Reason:</strong> {selectedRequest.reason}
@@ -566,15 +503,18 @@ export default function DashboardPage() {
                   placeholder="Explain why this application is being rejected (sent to employee in notification email)..."
                   value={rejectionRemarks}
                   onChange={(e) => setRejectionRemarks(e.target.value)}
+                  onBlur={(e) => setRejectionRemarks(normalizeReasonText(e.target.value))}
+                  minLength={3}
+                  maxLength={250}
                   autoFocus
                 />
                 <div className="form-helper">
-                  Required per SRS Section 6.3 & 6.5.
+                  Enter 3–250 characters using letters, numbers, spaces, or basic punctuation.
                 </div>
               </div>
             ) : (
               <p style={{ fontSize: '13px', color: '#17223a' }}>
-                Are you sure you want to approve this leave request? The employee will be notified via email and their leave quota will be updated automatically.
+                Are you sure you want to approve this leave request? The employee will be notified by email.
               </p>
             )}
           </div>

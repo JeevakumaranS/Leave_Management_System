@@ -1,5 +1,6 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsString, ValidateIf } from 'class-validator';
 import { DurationType, LeaveType } from '@prisma/client';
+import { IsReasonText } from '../../common/reason-text';
 
 export class CreateLeaveDto {
   @IsNotEmpty({ message: 'Employee ID is mandatory' })
@@ -16,14 +17,14 @@ export class CreateLeaveDto {
 
   @IsNotEmpty({ message: 'Manager Email ID is mandatory' })
   @IsString()
-  managerEmail: string; // director@durozen.in or hr@durozen.in
+  managerEmail: string;
 
   @IsNotEmpty({ message: 'Leave Type is mandatory' })
   @IsEnum(LeaveType, { message: 'Invalid leave type selected' })
   leaveType: LeaveType;
 
-  @IsOptional()
-  @IsString()
+  @ValidateIf((dto: CreateLeaveDto) => dto.leaveType === LeaveType.OTHER || dto.otherNote !== undefined)
+  @IsReasonText('Other Leave Note')
   otherNote?: string;
 
   @IsNotEmpty({ message: 'Start Date is mandatory' })
@@ -38,7 +39,6 @@ export class CreateLeaveDto {
   @IsEnum(DurationType, { message: 'Invalid duration selected' })
   duration: DurationType;
 
-  @IsNotEmpty({ message: 'Reason for Leave cannot be empty' })
-  @IsString()
+  @IsReasonText('Reason for Leave')
   reason: string;
 }

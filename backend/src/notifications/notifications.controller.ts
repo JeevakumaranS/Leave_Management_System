@@ -1,4 +1,4 @@
-import { Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -12,13 +12,19 @@ export class NotificationsController {
 
   @Get()
   @Roles(Role.HR, Role.DIRECTOR)
-  async getLogs(@Query('requestId') requestId?: string) {
-    return this.notificationsService.getLogs(requestId);
+  async getLogs(
+    @Query('requestId') requestId?: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.notificationsService.getLogs(requestId, page, limit);
   }
 
   @Post(':id/retry')
   @Roles(Role.HR, Role.DIRECTOR)
-  async retryNotification(@Param('id', ParseIntPipe) id: number) {
+  async retryNotification(
+    @Param('id', new ParseUUIDPipe({ version: '7' })) id: string,
+  ) {
     return this.notificationsService.retryNotification(id);
   }
 }

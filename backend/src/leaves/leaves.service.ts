@@ -7,8 +7,11 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateLeaveDto } from './dto/create-leave.dto';
-import { DurationType, EmployeeStatus, LeaveStatus, LeaveType, Role, TokenStatus } from '@prisma/client';
+import { DecisionMethod, DurationType, EmployeeStatus, LeaveStatus, LeaveType, Role, TokenStatus } from '@prisma/client';
 import * as crypto from 'crypto';
+import { getPagination } from '../common/pagination';
+
+const UUID_V7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 @Injectable()
 export class LeavesService {
@@ -19,7 +22,7 @@ export class LeavesService {
 
   async create(dto: CreateLeaveDto, currentUser?: any) {
     // 1. Employee existence and active status verification (BR-04)
-    const employee = await this.prisma.employee.findUnique({
+    const employee = await this.prisma.user.findUnique({
       where: { employeeId: dto.employeeId.trim().toUpperCase() },
     });
 
@@ -28,10 +31,10 @@ export class LeavesService {
     }
 
     if (employee.status !== EmployeeStatus.ACTIVE) {
-      throw new BadRequestException('Inactive employees cannot submit leave applications (BR-04).');
+      throw new BadRequestException('Inactive employees cannot submit leave applications.');
     }
 
-    // 2. Data Consistency (SRS 4.2): Employee ID, Name, and Email must represent the same registered employee record
+    // 2. Data Consistency: Employee ID, Name, and Email must represent the same registered employee record
     if (employee.name.toLowerCase().trim() !== dto.employeeName.toLowerCase().trim()) {
       throw new BadRequestException(
         `Employee Name does not match registered record for ID ${employee.employeeId}. Expected: ${employee.name}`,
@@ -49,14 +52,47 @@ export class LeavesService {
       throw new ForbiddenException('Employees are only permitted to submit leave requests for themselves.');
     }
 
-    // 3. Leave Type & Other Note validation (SRS 4.4, BR-08)
+    const manager = await this.prisma.user.findFirst({
+      where: {
+        email: dto.managerEmail.trim().toLowerCase(),
+        status: EmployeeStatus.ACTIVE,
+        role: { in: [Role.HR, Role.DIRECTOR] },
+      },
+      select: { email: true },
+    });
+    if (!manager) {
+      throw new BadRequestException('Selected manager must be an active HR or Director account.');
+    }
+
+    const activeApprovers = await this.prisma.user.findMany({
+      where: {
+        status: EmployeeStatus.ACTIVE,
+        role: { in: [Role.HR, Role.DIRECTOR] },
+      },
+      orderBy: { employeeId: 'asc' },
+      select: {
+        employeeId: true,
+        name: true,
+        email: true,
+        role: true,
+      },
+    });
+    const director = activeApprovers.find((approver) => approver.role === Role.DIRECTOR);
+    const hr = activeApprovers.find((approver) => approver.role === Role.HR);
+    if (!director || !hr) {
+      throw new BadRequestException(
+        'Leave requests require an active Director and an active HR account.',
+      );
+    }
+
+    // 3. Leave Type & Other Note validation
     if (dto.leaveType === LeaveType.OTHER) {
       if (!dto.otherNote || dto.otherNote.trim().length === 0) {
-        throw new BadRequestException('Other Leave Note is mandatory when Leave Type is "Other" (BR-08).');
+        throw new BadRequestException('Other Leave Note is mandatory when Leave Type is "Other".');
       }
     }
 
-    // 4. Date and Duration Validations (SRS 4.5, BR-05, BR-06)
+    // 4. Date and Duration Validations
     const start = new Date(dto.startDate);
     const end = new Date(dto.endDate);
 
@@ -69,7 +105,7 @@ export class LeavesService {
     const endDateOnly = new Date(end.getFullYear(), end.getMonth(), end.getDate());
 
     if (endDateOnly < startDateOnly) {
-      throw new BadRequestException('End Date cannot be earlier than Start Date (BR-05).');
+      throw new BadRequestException('End Date cannot be earlier than Start Date.');
     }
 
     const isSameDate = startDateOnly.getTime() === endDateOnly.getTime();
@@ -77,7 +113,7 @@ export class LeavesService {
     if (dto.duration !== DurationType.FULL_DAY) {
       if (!isSameDate) {
         throw new BadRequestException(
-          'Half-day leave is allowed only when Start Date and End Date are identical (BR-06).',
+          'Half-day leave is allowed only when Start Date and End Date are identical.',
         );
       }
     }
@@ -135,7 +171,7 @@ export class LeavesService {
           employeeId: employee.employeeId,
           employeeName: employee.name,
           employeeEmail: employee.email,
-          managerEmail: dto.managerEmail.trim().toLowerCase(),
+          managerEmail: manager.email,
           leaveType: dto.leaveType,
           otherNote: dto.leaveType === LeaveType.OTHER ? dto.otherNote?.trim() : null,
           startDate: startDateOnly,
@@ -152,8 +188,8 @@ export class LeavesService {
         data: {
           tokenId: `TOK-DIR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           requestId: leave.requestId,
-          approverId: 'DIR-001',
-          approverEmail: process.env.DIRECTOR_EMAIL || 'director@durozen.in',
+          approverId: director.employeeId,
+          approverEmail: director.email,
           tokenHash: directorToken,
           expiresAt,
           status: TokenStatus.ACTIVE,
@@ -165,8 +201,8 @@ export class LeavesService {
         data: {
           tokenId: `TOK-HR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           requestId: leave.requestId,
-          approverId: 'HR-001',
-          approverEmail: process.env.HR_EMAIL || 'hr@durozen.in',
+          approverId: hr.employeeId,
+          approverEmail: hr.email,
           tokenHash: hrToken,
           expiresAt,
           status: TokenStatus.ACTIVE,
@@ -180,8 +216,10 @@ export class LeavesService {
     this.notificationsService
       .sendLeaveRequestNotifications({
         request: created,
-        directorToken,
-        hrToken,
+        approvers: [
+          { ...director, token: directorToken },
+          { ...hr, token: hrToken },
+        ],
       })
       .catch((err) => console.error('Error sending request notification:', err));
 
@@ -217,20 +255,31 @@ export class LeavesService {
   }) {
     const where: any = {};
 
-    if (query.status) {
-      where.status = query.status;
+    const status = query.status?.trim();
+    if (status && status.toLowerCase() !== 'undefined') {
+      const validStatus = Object.values(LeaveStatus).find((value) => value === status);
+      if (!validStatus) {
+        throw new BadRequestException(`Invalid leave status '${status}'.`);
+      }
+      where.status = validStatus;
     }
 
-    if (query.leaveType) {
-      where.leaveType = query.leaveType;
+    const leaveType = query.leaveType?.trim();
+    if (leaveType && leaveType.toLowerCase() !== 'undefined') {
+      const validLeaveType = Object.values(LeaveType).find((value) => value === leaveType);
+      if (!validLeaveType) {
+        throw new BadRequestException(`Invalid leave type '${leaveType}'.`);
+      }
+      where.leaveType = validLeaveType;
     }
 
     if (query.employeeId) {
       where.employeeId = query.employeeId;
     }
 
-    if (query.search) {
-      const s = query.search.trim();
+    const search = query.search?.trim();
+    if (search && search.toLowerCase() !== 'undefined') {
+      const s = search;
       where.OR = [
         { requestId: { contains: s, mode: 'insensitive' } },
         { employeeId: { contains: s, mode: 'insensitive' } },
@@ -255,46 +304,49 @@ export class LeavesService {
       };
     }
 
-    const page = Number(query.page) || 1;
-    const limit = Number(query.limit) || 50;
-    const skip = (page - 1) * limit;
-
-    const [items, total] = await Promise.all([
-      this.prisma.leaveRequest.findMany({
+    const total = await this.prisma.leaveRequest.count({ where });
+    const { page, limit, totalPages } = getPagination(query.page, query.limit, total);
+    const items = await this.prisma.leaveRequest.findMany({
         where,
         orderBy: { submittedAt: 'desc' },
-        skip,
+        skip: (page - 1) * limit,
         take: limit,
         include: {
           tokens: {
             select: {
               approverEmail: true,
-              tokenHash: true,
               status: true,
               expiresAt: true,
             },
           },
         },
-      }),
-      this.prisma.leaveRequest.count({ where }),
-    ]);
+      });
 
     return {
       items,
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
+      totalPages,
     };
   }
 
   async getById(id: string) {
-    const leave = await this.prisma.leaveRequest.findFirst({
-      where: {
-        OR: [{ requestId: id }, { id: !isNaN(Number(id)) ? Number(id) : -1 }],
-      },
+    const where = UUID_V7_PATTERN.test(id) ? { id } : { requestId: id };
+    const leave = await this.prisma.leaveRequest.findUnique({
+      where,
       include: {
-        tokens: true,
+        tokens: {
+          select: {
+            tokenId: true,
+            approverId: true,
+            approverEmail: true,
+            status: true,
+            expiresAt: true,
+            usedAt: true,
+            createdAt: true,
+          },
+        },
         notifications: {
           orderBy: { sentAt: 'desc' },
         },
@@ -329,12 +381,22 @@ export class LeavesService {
 
       return tx.leaveRequest.update({
         where: { requestId: leave.requestId },
-        data: { status: LeaveStatus.CANCELLED },
+        data: {
+          status: LeaveStatus.CANCELLED,
+          decidedBy: currentUser.role === Role.EMPLOYEE ? 'Cancelled by Employee' : `Cancelled by ${currentUser.name || currentUser.role}`,
+          decidedByEmail: currentUser.email,
+          decidedAt: new Date(),
+          decisionMethod: DecisionMethod.PORTAL,
+        },
       });
     });
   }
 
-  async getCalendarLeaves(month?: number, year?: number) {
+  async getCalendarLeaves(
+    month: number | undefined,
+    year: number | undefined,
+    currentUser: { role: Role; employeeId: string },
+  ) {
     const y = year || new Date().getFullYear();
     const m = month ? month - 1 : new Date().getMonth();
 
@@ -344,6 +406,7 @@ export class LeavesService {
     return this.prisma.leaveRequest.findMany({
       where: {
         status: LeaveStatus.APPROVED,
+        ...(currentUser.role === Role.EMPLOYEE ? { employeeId: currentUser.employeeId } : {}),
         OR: [
           {
             startDate: { lte: endOfMonth },

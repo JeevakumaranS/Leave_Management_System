@@ -7,6 +7,7 @@ import {
   Query,
   UseGuards,
   Request,
+  ForbiddenException,
 } from '@nestjs/common';
 import { LeavesService } from './leaves.service';
 import { CreateLeaveDto } from './dto/create-leave.dto';
@@ -37,10 +38,11 @@ export class LeavesController {
   @UseGuards(JwtAuthGuard)
   @Get('calendar')
   async getCalendarLeaves(
+    @Request() req: any,
     @Query('month') month?: number,
     @Query('year') year?: number,
   ) {
-    return this.leavesService.getCalendarLeaves(month, year);
+    return this.leavesService.getCalendarLeaves(month, year, req.user);
   }
 
   // HR & Director viewing all employee leave applications (SRS 7.2, 7.3, 8)
@@ -80,7 +82,7 @@ export class LeavesController {
     const leave = await this.leavesService.getById(id);
     // If regular employee, only allow viewing own leave (SRS 2.1 TC-18)
     if (req.user.role === Role.EMPLOYEE && req.user.employeeId !== leave.employeeId) {
-      throw new Error('Access denied. Employees can view only their own records.');
+      throw new ForbiddenException('Employees can view only their own leave records.');
     }
     return leave;
   }

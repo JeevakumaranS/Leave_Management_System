@@ -12,14 +12,18 @@ export class ApprovalsController {
 
   // Verification endpoint for email token links (SRS 6.2, 6.3, 12)
   @Get('verify-token')
-  async verifyToken(@Query('token') token: string) {
-    return this.approvalsService.verifyToken(token);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.HR, Role.DIRECTOR)
+  async verifyToken(@Request() req: any, @Query('token') token: string) {
+    return this.approvalsService.verifyToken(token, req.user);
   }
 
   // Email-based decision submission
   @Post('decide-with-token')
-  async decideWithToken(@Body() dto: DecideWithTokenDto) {
-    return this.approvalsService.decideWithToken(dto);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.HR, Role.DIRECTOR)
+  async decideWithToken(@Request() req: any, @Body() dto: DecideWithTokenDto) {
+    return this.approvalsService.decideWithToken(dto, req.user);
   }
 
   // In-portal decision submission (HR/Director only)

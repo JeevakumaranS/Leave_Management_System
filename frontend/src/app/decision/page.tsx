@@ -3,7 +3,11 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { api } from '../../lib/api';
+import { useAuth } from '../../lib/auth-context';
 import { useToast } from '../../components/Toast';
+import { useLiveDataRefresh } from '../../lib/use-live-data-refresh';
+import { formatDate, formatDateTime } from '../../lib/date';
+import { getReasonTextError, normalizeReasonText } from '../../lib/reason-validation';
 import {
   CheckIcon,
   XIcon,
@@ -15,10 +19,18 @@ import {
 function DecisionContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { user, loading: authLoading, logout } = useAuth();
   const { success, error } = useToast();
 
   const token = searchParams.get('token');
   const initialAction = searchParams.get('action'); // 'approve' or 'reject'
+  const returnTo = token
+    ? `/decision?${new URLSearchParams({
+        token,
+        action: initialAction?.toLowerCase() === 'reject' ? 'reject' : 'approve',
+      }).toString()}`
+    : '/decision';
+  const loginUrl = `/login?returnTo=${encodeURIComponent(returnTo)}`;
 
   const [loading, setLoading] = useState(true);
   const [tokenData, setTokenData] = useState<any>(null);
@@ -32,6 +44,16 @@ function DecisionContent() {
   const [decidedResult, setDecidedResult] = useState<any>(null);
 
   useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      router.replace(loginUrl);
+      return;
+    }
+    if (user.role !== 'HR' && user.role !== 'DIRECTOR') {
+      setVerificationError('Only the HR or Director account assigned to this link can review it.');
+      setLoading(false);
+      return;
+    }
     if (!token) {
       setVerificationError('No approval token was provided in the link.');
       setLoading(false);
@@ -39,26 +61,45 @@ function DecisionContent() {
     }
 
     verifyApprovalToken(token);
-  }, [token]);
+  }, [token, user, authLoading, loginUrl, router]);
 
-  const verifyApprovalToken = async (tok: string) => {
-    setLoading(true);
-    setVerificationError(null);
+  const verifyApprovalToken = async (tok: string, silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setVerificationError(null);
+    }
     try {
       const res = await api.approvals.verifyToken(tok);
       setTokenData(res);
     } catch (err: any) {
+      if (silent) throw err;
       setVerificationError(err.message || 'Approval token could not be verified.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
+  useLiveDataRefresh(
+    () => (token && !decidedResult ? verifyApprovalToken(token, true) : undefined),
+    Boolean(
+      token &&
+      user &&
+      (user.role === 'HR' || user.role === 'DIRECTOR') &&
+      !decidedResult &&
+      !verificationError &&
+      tokenData?.isPending !== false &&
+      !tokenData?.isExpired,
+    ),
+  );
+
   const handleExecuteDecision = async () => {
     if (!token) return;
-    if (action === 'REJECT' && !rejectionRemarks.trim()) {
-      error('Rejection remarks are mandatory to explain why the leave is rejected (SRS 6.3).');
-      return;
+    if (action === 'REJECT') {
+      const remarksError = getReasonTextError(rejectionRemarks, 'Rejection remarks');
+      if (remarksError) {
+        error(remarksError);
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -66,13 +107,11 @@ function DecisionContent() {
       const res = await api.approvals.decideWithToken({
         token,
         action,
-        rejectionRemarks: action === 'REJECT' ? rejectionRemarks.trim() : undefined,
+        rejectionRemarks: action === 'REJECT' ? normalizeReasonText(rejectionRemarks) : undefined,
       });
 
       setDecidedResult(res);
-      success(
-        `Leave request ${res.requestId} successfully recorded as ${res.status}! Notification email sent to employee.`
-      );
+      success(`Leave request ${res.requestId} successfully recorded as ${res.status}.`);
     } catch (err: any) {
       error(err.message || 'Failed to record decision');
       // Re-verify to see if someone else decided in the meantime
@@ -83,13 +122,14 @@ function DecisionContent() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#F6F8FB', padding: '40px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ maxWidth: '640px', width: '100%', background: '#FFFFFF', borderRadius: '12px', border: '1px solid #E8EDF3', boxShadow: '0 10px 25px -5px rgba(23,34,58,0.08)', overflow: 'hidden' }}>
+    <div className="decision-page" style={{ minHeight: '100vh', backgroundColor: '#F6F8FB', padding: '40px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="decision-card" style={{ maxWidth: '640px', width: '100%', background: '#FFFFFF', borderRadius: '12px', border: '1px solid #E8EDF3', boxShadow: '0 10px 25px -5px rgba(23,34,58,0.08)', overflow: 'hidden' }}>
         {/* Brand Header */}
-        <div style={{ background: '#15213A', color: '#ffffff', padding: '24px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '0.5px' }}>DUROZEN TECHNOLOGIES</div>
-            <div style={{ fontSize: '12px', color: '#9cb4dd' }}>Employee Leave Decision Authorization Gateway</div>
+        <div className="decision-card-header" style={{ background: '#15213A', color: '#ffffff', padding: '24px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div>
+              <div style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '0.5px' }}>Employee Leave Decision Authorization Gateway</div>
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(255,255,255,0.08)', padding: '6px 12px', borderRadius: '20px', fontSize: '11.5px' }}>
             <ShieldIcon size={14} color="#9cb4dd" />
@@ -97,7 +137,7 @@ function DecisionContent() {
           </div>
         </div>
 
-        <div style={{ padding: '32px' }}>
+        <div className="decision-card-content" style={{ padding: '32px' }}>
           {loading ? (
             <div style={{ textAlign: 'center', padding: '48px 0', color: '#7E8798' }}>
               <div style={{ fontSize: '16px', fontWeight: 600 }}>Verifying decision authorization token...</div>
@@ -113,8 +153,14 @@ function DecisionContent() {
               <p style={{ fontSize: '14px', color: '#7E8798', marginTop: '8px', maxWidth: '420px', margin: '8px auto 24px' }}>
                 {verificationError}
               </p>
-              <button onClick={() => router.push('/login')} className="btn btn-primary">
-                Return to Portal Login
+              <button
+                onClick={() => {
+                  logout();
+                  router.replace(loginUrl);
+                }}
+                className="btn btn-primary"
+              >
+                Sign in with the authorized approver account
               </button>
             </div>
           ) : decidedResult ? (
@@ -142,10 +188,7 @@ function DecisionContent() {
                   <strong>Decision Authority:</strong> {decidedResult.decidedBy}
                 </div>
                 <div style={{ marginBottom: '6px' }}>
-                  <strong>Timestamp:</strong> {new Date(decidedResult.decidedAt).toLocaleString()}
-                </div>
-                <div style={{ color: '#1B9E76', fontWeight: 600, marginTop: '8px' }}>
-                  Automated email notification sent to {decidedResult.employeeEmail}.
+                  <strong>Timestamp:</strong> {formatDateTime(decidedResult.decidedAt)}
                 </div>
               </div>
 
@@ -163,7 +206,7 @@ function DecisionContent() {
                 Action Rejected: Request Already Decided
               </h2>
               <p style={{ fontSize: '13.5px', color: '#7E8798', marginTop: '8px', lineHeight: 1.5 }}>
-                Per Durozen Leave Policy (SRS 5.1 & BR-11), the first valid decision by either Director or HR becomes final.
+                Per Durozen Leave Policy, the first valid decision by either Director or HR becomes final.
               </p>
 
               <div style={{ background: '#F6F8FB', padding: '16px', borderRadius: '8px', border: '1px solid #E8EDF3', margin: '20px 0', textAlign: 'left', fontSize: '13px' }}>
@@ -174,7 +217,7 @@ function DecisionContent() {
                   </span>
                 </div>
                 <div><strong>Decided By:</strong> {tokenData.alreadyDecidedBy || 'Administrator'}</div>
-                <div><strong>Decision Timestamp:</strong> {tokenData.decidedAt ? new Date(tokenData.decidedAt).toLocaleString() : 'Recorded'}</div>
+                <div><strong>Decision Timestamp:</strong> {tokenData.decidedAt ? formatDateTime(tokenData.decidedAt) : 'Recorded'}</div>
                 {tokenData.request.rejectionRemarks && (
                   <div style={{ marginTop: '6px', color: '#D75A67' }}>
                     <strong>Remarks:</strong> {tokenData.request.rejectionRemarks}
@@ -202,7 +245,7 @@ function DecisionContent() {
               </div>
 
               {/* Request Details Table */}
-              <div style={{ background: '#F6F8FB', padding: '16px', borderRadius: '8px', border: '1px solid #E8EDF3', marginBottom: '24px' }}>
+              <div className="decision-request-details" style={{ background: '#F6F8FB', padding: '16px', borderRadius: '8px', border: '1px solid #E8EDF3', marginBottom: '24px' }}>
                 <table style={{ width: '100%', fontSize: '13px' }}>
                   <tbody>
                     <tr>
@@ -225,7 +268,7 @@ function DecisionContent() {
                     <tr>
                       <th style={{ padding: '6px 0', color: '#7E8798' }}>Dates & Duration</th>
                       <td>
-                        {new Date(tokenData.request.startDate).toLocaleDateString()} to {new Date(tokenData.request.endDate).toLocaleDateString()} •{' '}
+                        {formatDate(tokenData.request.startDate)} to {formatDate(tokenData.request.endDate)} •{' '}
                         <strong>{tokenData.request.numberOfDays} Day(s)</strong> ({tokenData.request.duration.replace(/_/g, ' ')})
                       </td>
                     </tr>
@@ -284,17 +327,21 @@ function DecisionContent() {
                     placeholder="Enter explicit reason for rejecting this leave request (mandatory)..."
                     value={rejectionRemarks}
                     onChange={(e) => setRejectionRemarks(e.target.value)}
+                    onBlur={(e) => setRejectionRemarks(normalizeReasonText(e.target.value))}
+                    minLength={3}
+                    maxLength={250}
                     autoFocus
                   />
                   <div className="form-helper">
-                    SRS 6.3: Rejection remarks will be recorded in the audit trail and emailed to the employee.
+                    Enter 3–250 characters using letters, numbers, spaces, or basic punctuation.
+                    Rejection remarks will be recorded in the audit trail and emailed to the employee.
                   </div>
                 </div>
               )}
 
               {/* Critical Security Warning */}
               <div style={{ padding: '12px', background: '#E9F1FF', borderRadius: '6px', borderLeft: '4px solid #2869DC', fontSize: '12px', color: '#2869DC', margin: '20px 0', lineHeight: 1.5 }}>
-                <strong>CRITICAL SECURITY & WORKFLOW NOTICE:</strong> Confirming this decision will atomically update the leave request and permanently invalidate the decision link for both approvers (SRS 5.2 & 12).
+                <strong>CRITICAL SECURITY & WORKFLOW NOTICE:</strong> Confirming this decision will update the leave request and permanently finalize the decision for both approvers.
               </div>
 
               <button

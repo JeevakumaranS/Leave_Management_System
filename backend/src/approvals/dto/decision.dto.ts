@@ -1,4 +1,5 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsOptional, IsString, ValidateIf } from 'class-validator';
+import { IsReasonText } from '../../common/reason-text';
 
 export enum ApprovalAction {
   APPROVE = 'APPROVE',
@@ -18,8 +19,8 @@ export class DecideWithTokenDto {
   @IsString()
   approverEmailConfirmation?: string;
 
-  @IsOptional()
-  @IsString()
+  @ValidateIf((dto: DecideWithTokenDto) => dto.action === ApprovalAction.REJECT)
+  @IsReasonText('Rejection remarks')
   rejectionRemarks?: string;
 }
 
@@ -28,7 +29,7 @@ export class DecidePortalDto {
   @IsEnum(ApprovalAction)
   action: ApprovalAction;
 
-  @IsOptional()
-  @IsString()
+  @ValidateIf((dto: DecidePortalDto) => dto.action === ApprovalAction.REJECT)
+  @IsReasonText('Rejection remarks')
   rejectionRemarks?: string;
 }

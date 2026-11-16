@@ -1,6 +1,7 @@
 import { Controller, Post, Body, Get, UseGuards, Request } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { LoginDto, QuickLoginDto } from './dto/login.dto';
+import { LoginDto } from './dto/login.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 @Controller('auth')
@@ -12,9 +13,10 @@ export class AuthController {
     return this.authService.login(loginDto);
   }
 
-  @Post('quick-login')
-  async quickLogin(@Body() body: QuickLoginDto) {
-    return this.authService.quickLogin(body.role);
+  @UseGuards(JwtAuthGuard)
+  @Post('change-password')
+  async changePassword(@Request() req: any, @Body() dto: ChangePasswordDto) {
+    return this.authService.changePassword(req.user.id, dto);
   }
 
   @UseGuards(JwtAuthGuard)

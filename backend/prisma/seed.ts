@@ -12,115 +12,101 @@ async function main() {
   await prisma.approvalToken.deleteMany();
   await prisma.leaveRequest.deleteMany();
   await prisma.approver.deleteMany();
-  await prisma.employee.deleteMany();
+  await prisma.user.deleteMany();
 
   const defaultPasswordHash = await bcrypt.hash('Password@123', 10);
 
   // 1. Create Director
-  const director = await prisma.employee.create({
+  const director = await prisma.user.create({
     data: {
       employeeId: 'DIR-001',
       name: 'Director Administrator',
-      email: 'director@durozen.in',
+      email: 'director@example.test',
       passwordHash: defaultPasswordHash,
       role: Role.DIRECTOR,
       status: EmployeeStatus.ACTIVE,
       department: 'Executive Management',
       designation: 'Managing Director',
-      annualQuota: 12.0,
-      usedQuota: 0.0,
     },
   });
 
   // 2. Create HR Administrator
-  const hr = await prisma.employee.create({
+  const hr = await prisma.user.create({
     data: {
       employeeId: 'HR-001',
       name: 'HR Administrator',
-      email: 'hr@durozen.in',
+      email: 'hr@example.test',
       passwordHash: defaultPasswordHash,
       role: Role.HR,
       status: EmployeeStatus.ACTIVE,
       department: 'Human Resources',
       designation: 'Head of People & Culture',
-      annualQuota: 12.0,
-      usedQuota: 0.0,
     },
   });
 
   // 3. Create Employees
-  const emp1 = await prisma.employee.create({
+  const emp1 = await prisma.user.create({
     data: {
       employeeId: 'EMP-101',
       name: 'Sarah Jenkins',
-      email: 'sarah.jenkins@durozen.in',
+      email: 'sarah.jenkins@example.test',
       passwordHash: defaultPasswordHash,
       role: Role.EMPLOYEE,
       status: EmployeeStatus.ACTIVE,
       department: 'Engineering',
       designation: 'Senior Backend Engineer',
-      annualQuota: 12.0,
-      usedQuota: 2.0,
     },
   });
 
-  const emp2 = await prisma.employee.create({
+  const emp2 = await prisma.user.create({
     data: {
       employeeId: 'EMP-102',
       name: 'Rajesh Kumar',
-      email: 'rajesh.kumar@durozen.in',
+      email: 'rajesh.kumar@example.test',
       passwordHash: defaultPasswordHash,
       role: Role.EMPLOYEE,
       status: EmployeeStatus.ACTIVE,
       department: 'Frontend Development',
       designation: 'Frontend Engineer',
-      annualQuota: 12.0,
-      usedQuota: 3.5,
     },
   });
 
-  const emp3 = await prisma.employee.create({
+  const emp3 = await prisma.user.create({
     data: {
       employeeId: 'EMP-103',
       name: 'Priya Sharma',
-      email: 'priya.sharma@durozen.in',
+      email: 'priya.sharma@example.test',
       passwordHash: defaultPasswordHash,
       role: Role.EMPLOYEE,
       status: EmployeeStatus.ACTIVE,
       department: 'Quality Assurance',
       designation: 'QA Analyst',
-      annualQuota: 12.0,
-      usedQuota: 1.0,
     },
   });
 
-  const emp4 = await prisma.employee.create({
+  const emp4 = await prisma.user.create({
     data: {
       employeeId: 'EMP-104',
       name: 'Alex Vance',
-      email: 'alex.vance@durozen.in',
+      email: 'alex.vance@example.test',
       passwordHash: defaultPasswordHash,
       role: Role.EMPLOYEE,
       status: EmployeeStatus.ACTIVE,
       department: 'Product & Design',
       designation: 'Lead UI/UX Designer',
-      annualQuota: 12.0,
-      usedQuota: 0.0,
     },
   });
 
-  const empInactive = await prisma.employee.create({
+  const empInactive = await prisma.user.create({
     data: {
       employeeId: 'EMP-105',
       name: 'Michael Scott',
-      email: 'michael.scott@durozen.in',
+      email: 'michael.scott@example.test',
       passwordHash: defaultPasswordHash,
       role: Role.EMPLOYEE,
       status: EmployeeStatus.INACTIVE,
       department: 'Operations',
       designation: 'Former Logistics Lead',
-      annualQuota: 12.0,
-      usedQuota: 4.0,
     },
   });
 
@@ -130,14 +116,14 @@ async function main() {
       {
         approverId: 'DIR-001',
         name: 'Director Administrator',
-        email: 'director@durozen.in',
+        email: director.email,
         role: Role.DIRECTOR,
         status: EmployeeStatus.ACTIVE,
       },
       {
         approverId: 'HR-001',
         name: 'HR Administrator',
-        email: 'hr@durozen.in',
+        email: hr.email,
         role: Role.HR,
         status: EmployeeStatus.ACTIVE,
       },
@@ -156,7 +142,7 @@ async function main() {
       employeeId: emp1.employeeId,
       employeeName: emp1.name,
       employeeEmail: emp1.email,
-      managerEmail: 'director@durozen.in',
+      managerEmail: director.email,
       leaveType: LeaveType.CASUAL_LEAVE,
       startDate: nextMonday,
       endDate: nextTuesday,
@@ -177,7 +163,7 @@ async function main() {
         tokenId: 'TOK-DIR-0001',
         requestId: pendingLeave.requestId,
         approverId: 'DIR-001',
-        approverEmail: 'director@durozen.in',
+        approverEmail: director.email,
         tokenHash: sampleDirToken,
         status: TokenStatus.ACTIVE,
         expiresAt: new Date(Date.now() + 7 * 24 * 3600000),
@@ -186,7 +172,7 @@ async function main() {
         tokenId: 'TOK-HR-0001',
         requestId: pendingLeave.requestId,
         approverId: 'HR-001',
-        approverEmail: 'hr@durozen.in',
+        approverEmail: hr.email,
         tokenHash: sampleHrToken,
         status: TokenStatus.ACTIVE,
         expiresAt: new Date(Date.now() + 7 * 24 * 3600000),
@@ -200,7 +186,7 @@ async function main() {
       {
         notificationId: 'NOTIF-0001-DIR',
         requestId: pendingLeave.requestId,
-        recipientEmail: 'director@durozen.in',
+        recipientEmail: director.email,
         recipientRole: 'DIRECTOR',
         notificationType: NotificationType.REQUEST,
         subject: `Leave Approval Request – ${emp1.name} – ${emp1.employeeId}`,
@@ -211,7 +197,7 @@ async function main() {
       {
         notificationId: 'NOTIF-0001-HR',
         requestId: pendingLeave.requestId,
-        recipientEmail: 'hr@durozen.in',
+        recipientEmail: hr.email,
         recipientRole: 'HR',
         notificationType: NotificationType.REQUEST,
         subject: `Leave Approval Request – ${emp1.name} – ${emp1.employeeId}`,
@@ -232,7 +218,7 @@ async function main() {
       employeeId: emp2.employeeId,
       employeeName: emp2.name,
       employeeEmail: emp2.email,
-      managerEmail: 'hr@durozen.in',
+      managerEmail: hr.email,
       leaveType: LeaveType.SICK_LEAVE,
       startDate: pastStart,
       endDate: pastEnd,
@@ -240,8 +226,8 @@ async function main() {
       numberOfDays: 2.0,
       reason: 'Severe viral fever and physician-prescribed bed rest.',
       status: LeaveStatus.APPROVED,
-      decidedBy: 'Director (director@durozen.in)',
-      decidedByEmail: 'director@durozen.in',
+      decidedBy: `Director (${director.email})`,
+      decidedByEmail: director.email,
       decidedAt: new Date(Date.now() - 3600000 * 48),
       decisionMethod: DecisionMethod.EMAIL,
       submittedAt: new Date(Date.now() - 3600000 * 50),
@@ -272,7 +258,7 @@ async function main() {
       employeeId: emp3.employeeId,
       employeeName: emp3.name,
       employeeEmail: emp3.email,
-      managerEmail: 'hr@durozen.in',
+      managerEmail: hr.email,
       leaveType: LeaveType.OTHER,
       otherNote: 'Personal workshop attendance',
       startDate: pastStart2,
@@ -281,8 +267,8 @@ async function main() {
       numberOfDays: 0.5,
       reason: 'Need morning off to attend an external workshop.',
       status: LeaveStatus.REJECTED,
-      decidedBy: 'HR Administrator (hr@durozen.in)',
-      decidedByEmail: 'hr@durozen.in',
+      decidedBy: `HR Administrator (${hr.email})`,
+      decidedByEmail: hr.email,
       decidedAt: new Date(Date.now() - 3600000 * 70),
       decisionMethod: DecisionMethod.PORTAL,
       rejectionRemarks: 'Critical release sprint testing scheduled during the same window. Please reschedule.',
@@ -307,11 +293,11 @@ async function main() {
   console.log('Seed completed successfully!');
   console.log('-------------------------------------------');
   console.log('Demo Credentials (All passwords: Password@123):');
-  console.log('1. Director: director@durozen.in (or DIR-001)');
-  console.log('2. HR Administrator: hr@durozen.in (or HR-001)');
-  console.log('3. Employee: sarah.jenkins@durozen.in (or EMP-101)');
-  console.log('4. Employee: rajesh.kumar@durozen.in (or EMP-102)');
-  console.log('5. Inactive Employee: michael.scott@durozen.in (or EMP-105)');
+  console.log(`1. Director: ${director.email} (or DIR-001)`);
+  console.log(`2. HR Administrator: ${hr.email} (or HR-001)`);
+  console.log(`3. Employee: ${emp1.email} (or EMP-101)`);
+  console.log(`4. Employee: ${emp2.email} (or EMP-102)`);
+  console.log(`5. Inactive Employee: ${empInactive.email} (or EMP-105)`);
   console.log('-------------------------------------------');
 }
 

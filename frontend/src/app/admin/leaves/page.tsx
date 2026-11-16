@@ -8,6 +8,9 @@ import { useToast } from '../../../components/Toast';
 import { Sidebar } from '../../../components/Sidebar';
 import { Navbar } from '../../../components/Navbar';
 import { Modal } from '../../../components/Modal';
+import { PAGE_SIZE, PaginationControls } from '../../../components/PaginationControls';
+import { formatDate, formatDateTime } from '../../../lib/date';
+import { useLiveDataRefresh } from '../../../lib/use-live-data-refresh';
 import {
   FileTextIcon,
   RefreshIcon,
@@ -23,13 +26,24 @@ export default function AllLeavesPage() {
 
   const [leaves, setLeaves] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
   // Filters
   const [search, setSearch] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [selectedLeave, setSelectedLeave] = useState<any>(null);
+
+  // Auto-search debouncer without clicking search button
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAppliedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     if (!authLoading) {
@@ -41,30 +55,51 @@ export default function AllLeavesPage() {
         router.push('/dashboard');
         return;
       }
-      loadLeaves();
+      loadLeaves(page);
     }
-  }, [user, authLoading, isAdmin, statusFilter, typeFilter]);
+  }, [user, authLoading, isAdmin, statusFilter, typeFilter, appliedSearch, page]);
 
-  const loadLeaves = async () => {
-    setLoading(true);
+  const loadLeaves = async (targetPage = page, silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await api.leaves.getAll({
-        search: search.trim() || undefined,
+        search: appliedSearch || undefined,
         status: statusFilter || undefined,
         leaveType: typeFilter || undefined,
+        page: targetPage,
+        limit: PAGE_SIZE,
       });
       setLeaves(res.items);
       setTotal(res.total);
+      setPage(res.page);
     } catch (err: any) {
+      if (silent) throw err;
       error(err.message || 'Failed to load leaves');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
+  useLiveDataRefresh(() => loadLeaves(page, true), Boolean(user && isAdmin));
+
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    loadLeaves();
+    setPage(1);
+    setAppliedSearch(search.trim());
+  };
+
+  const handleExport = async () => {
+    try {
+      const file = await api.reports.exportCsv(statusFilter || undefined);
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `durozen_leave_report_${Date.now()}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      error(err.message || 'Failed to export leave report');
+    }
   };
 
   if (authLoading || !isAdmin) return null;
@@ -85,38 +120,38 @@ export default function AllLeavesPage() {
             </div>
 
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={loadLeaves} className="btn btn-secondary btn-sm" title="Refresh">
+              <button onClick={() => loadLeaves()} className="btn btn-secondary btn-sm" title="Refresh">
                 <RefreshIcon size={14} /> Refresh
               </button>
-              <a
-                href={api.reports.exportCsvUrl(statusFilter)}
-                target="_blank"
-                rel="noreferrer"
-                className="btn btn-primary btn-sm"
-              >
+              <button onClick={handleExport} className="btn btn-primary btn-sm">
                 <DownloadIcon size={16} /> Export CSV
-              </a>
+              </button>
             </div>
           </div>
 
-          {/* Search & Filter Bar */}
-          <div className="card" style={{ padding: '18px 20px', marginBottom: '20px' }}>
-            <form onSubmit={handleSearchSubmit} style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'center' }}>
-              <div style={{ flex: '1', minWidth: '220px' }}>
+          {/* Search & Filter Bar - Single Row */}
+          <div className="card compact-search-card" style={{ padding: '8px 12px', marginBottom: '14px' }}>
+            <div className="compact-search-row">
+              <div style={{ flex: '1', minWidth: '120px' }}>
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="Search by Employee ID, Name, Request ID or reason..."
+                  placeholder="Auto-search Employee ID, Name, Request ID..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
+                  style={{ height: '32px', fontSize: '12px', padding: '4px 8px' }}
                 />
               </div>
 
-              <div style={{ width: '160px' }}>
+              <div style={{ width: '120px', flexShrink: 0 }}>
                 <select
                   className="form-select"
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
+                  onChange={(e) => {
+                    setStatusFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  style={{ height: '32px', fontSize: '12px', padding: '4px 6px' }}
                 >
                   <option value="">All Statuses</option>
                   <option value="PENDING">Pending</option>
@@ -126,38 +161,42 @@ export default function AllLeavesPage() {
                 </select>
               </div>
 
-              <div style={{ width: '180px' }}>
+              <div style={{ width: '125px', flexShrink: 0 }}>
                 <select
                   className="form-select"
                   value={typeFilter}
-                  onChange={(e) => setTypeFilter(e.target.value)}
+                  onChange={(e) => {
+                    setTypeFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  style={{ height: '32px', fontSize: '12px', padding: '4px 6px' }}
                 >
-                  <option value="">All Leave Types</option>
-                  <option value="CASUAL_LEAVE">Casual Leave (PL)</option>
+                  <option value="">All Types</option>
+                  <option value="CASUAL_LEAVE">Casual Leave</option>
                   <option value="SICK_LEAVE">Sick Leave</option>
-                  <option value="EMERGENCY_LEAVE">Emergency Leave</option>
+                  <option value="EMERGENCY_LEAVE">Emergency</option>
                   <option value="OTHER">Other</option>
                 </select>
               </div>
 
-              <button type="submit" className="btn btn-secondary">
-                Search
-              </button>
               {(search || statusFilter || typeFilter) && (
                 <button
                   type="button"
                   onClick={() => {
                     setSearch('');
+                    setAppliedSearch('');
                     setStatusFilter('');
                     setTypeFilter('');
+                    setPage(1);
                   }}
-                  className="btn btn-sm"
-                  style={{ border: 'none', color: '#64748b' }}
+                  className="btn btn-secondary btn-sm"
+                  title="Clear filters"
+                  style={{ height: '32px', padding: '0 8px', fontSize: '12px', whiteSpace: 'nowrap', flexShrink: 0 }}
                 >
-                  Clear Filters
+                  <XIcon size={12} /> Clear
                 </button>
               )}
-            </form>
+            </div>
           </div>
 
           {/* Table */}
@@ -191,7 +230,7 @@ export default function AllLeavesPage() {
                       <td>
                         <strong style={{ color: '#15213a' }}>{l.requestId}</strong>
                         <div style={{ fontSize: '11px', color: '#64748b' }}>
-                          {new Date(l.submittedAt).toLocaleDateString()}
+                          {formatDate(l.submittedAt)}
                         </div>
                       </td>
                       <td>
@@ -206,8 +245,8 @@ export default function AllLeavesPage() {
                       </td>
                       <td>
                         <div style={{ fontSize: '13px' }}>
-                          {new Date(l.startDate).toLocaleDateString()}
-                          {l.startDate !== l.endDate ? ` to ${new Date(l.endDate).toLocaleDateString()}` : ''}
+                          {formatDate(l.startDate)}
+                          {l.startDate !== l.endDate ? ` to ${formatDate(l.endDate)}` : ''}
                         </div>
                       </td>
                       <td>
@@ -219,15 +258,24 @@ export default function AllLeavesPage() {
                         </span>
                       </td>
                       <td>
-                        {l.decidedBy ? (
+                        {l.status === 'CANCELLED' ? (
+                          <div style={{ fontSize: '12px' }}>
+                            <div style={{ fontWeight: 600, color: '#7E8798' }}>Cancelled by Employee</div>
+                            {l.decidedAt && (
+                              <div style={{ color: '#94A3B8', fontSize: '11px' }}>
+                                {formatDateTime(l.decidedAt)}
+                              </div>
+                            )}
+                          </div>
+                        ) : l.decidedBy ? (
                           <div style={{ fontSize: '12px' }}>
                             <div style={{ fontWeight: 600 }}>{l.decidedBy}</div>
                             <div style={{ color: '#64748b' }}>
-                              {new Date(l.decidedAt).toLocaleDateString()} ({l.decisionMethod})
+                              {formatDateTime(l.decidedAt)} {l.decisionMethod ? `(${l.decisionMethod})` : ''}
                             </div>
                           </div>
                         ) : (
-                          <span style={{ color: '#b45309', fontSize: '12px' }}>Pending</span>
+                          <span style={{ color: '#b45309', fontSize: '12px' }}>Awaiting Decision</span>
                         )}
                       </td>
                       <td style={{ textAlign: 'right' }}>
@@ -235,7 +283,7 @@ export default function AllLeavesPage() {
                           onClick={() => setSelectedLeave(l)}
                           className="btn btn-secondary btn-sm"
                         >
-                          Audit & Details
+                          Details
                         </button>
                       </td>
                     </tr>
@@ -244,6 +292,9 @@ export default function AllLeavesPage() {
               </table>
             </div>
           )}
+          {!loading && leaves.length > 0 && (
+            <PaginationControls currentPage={page} totalItems={total} onPageChange={setPage} />
+          )}
         </main>
       </div>
 
@@ -251,7 +302,8 @@ export default function AllLeavesPage() {
       <Modal
         isOpen={!!selectedLeave}
         onClose={() => setSelectedLeave(null)}
-        title={`Audit & Application Details - ${selectedLeave?.requestId}`}
+        title={`Details - ${selectedLeave?.requestId}`}
+        maxWidth="760px"
         footer={
           <button className="btn btn-secondary btn-sm" onClick={() => setSelectedLeave(null)}>
             Close
@@ -264,7 +316,7 @@ export default function AllLeavesPage() {
               <div>
                 <strong style={{ fontSize: '16px', color: '#15213a' }}>{selectedLeave.requestId}</strong>
                 <div style={{ fontSize: '12px', color: '#64748b' }}>
-                  Submitted on {new Date(selectedLeave.submittedAt).toLocaleString()}
+                  Submitted on {formatDateTime(selectedLeave.submittedAt)}
                 </div>
               </div>
               <span className={`badge badge-${selectedLeave.status.toLowerCase()}`}>
@@ -272,7 +324,15 @@ export default function AllLeavesPage() {
               </span>
             </div>
 
-            <table style={{ marginBottom: '16px' }}>
+            <table
+              style={{
+                width: '100%',
+                tableLayout: 'fixed',
+                marginBottom: '16px',
+                overflowWrap: 'anywhere',
+                whiteSpace: 'normal',
+              }}
+            >
               <tbody>
                 <tr>
                   <th style={{ width: '40%' }}>Employee</th>
@@ -299,7 +359,7 @@ export default function AllLeavesPage() {
                 <tr>
                   <th>Dates</th>
                   <td>
-                    {new Date(selectedLeave.startDate).toLocaleDateString()} to {new Date(selectedLeave.endDate).toLocaleDateString()}
+                    {formatDate(selectedLeave.startDate)} to {formatDate(selectedLeave.endDate)}
                   </td>
                 </tr>
                 <tr>
@@ -310,7 +370,22 @@ export default function AllLeavesPage() {
                   <th>Reason</th>
                   <td>{selectedLeave.reason}</td>
                 </tr>
-                {selectedLeave.decidedBy && (
+                {selectedLeave.status === 'CANCELLED' ? (
+                  <>
+                    <tr>
+                      <th>Cancellation Detail</th>
+                      <td style={{ color: '#7E8798', fontWeight: 600 }}>
+                        {selectedLeave.decidedBy || 'Cancelled by Employee'}
+                      </td>
+                    </tr>
+                    {selectedLeave.decidedAt && (
+                      <tr>
+                        <th>Cancellation Time</th>
+                        <td>{formatDateTime(selectedLeave.decidedAt)}</td>
+                      </tr>
+                    )}
+                  </>
+                ) : selectedLeave.decidedBy ? (
                   <>
                     <tr>
                       <th>Decided By</th>
@@ -318,14 +393,16 @@ export default function AllLeavesPage() {
                     </tr>
                     <tr>
                       <th>Decision Timestamp</th>
-                      <td>{new Date(selectedLeave.decidedAt).toLocaleString()}</td>
+                      <td>{formatDateTime(selectedLeave.decidedAt)}</td>
                     </tr>
-                    <tr>
-                      <th>Decision Channel</th>
-                      <td>{selectedLeave.decisionMethod}</td>
-                    </tr>
+                    {selectedLeave.decisionMethod && (
+                      <tr>
+                        <th>Decision Channel</th>
+                        <td>{selectedLeave.decisionMethod}</td>
+                      </tr>
+                    )}
                   </>
-                )}
+                ) : null}
                 {selectedLeave.rejectionRemarks && (
                   <tr>
                     <th>Rejection Remarks</th>

@@ -5,18 +5,24 @@ const rootDir = path.resolve(__dirname, '..');
 const isWin = process.platform === 'win32';
 const npmCmd = isWin ? 'npm.cmd' : 'npm';
 const npxCmd = isWin ? 'npx.cmd' : 'npx';
+const isDevelopment = process.argv[2] === 'dev';
 
 console.log('\x1b[36m%s\x1b[0m', '=====================================================');
-console.log('\x1b[36m%s\x1b[0m', ' Starting Durozen Leave Management System (Dev Mode)');
-console.log('\x1b[36m%s\x1b[0m', ' Frontend: http://localhost:3000');
-console.log('\x1b[36m%s\x1b[0m', ' Backend API: http://localhost:4000/api');
+console.log(
+  '\x1b[36m%s\x1b[0m',
+  ` Starting Durozen Leave Management System (${isDevelopment ? 'Dev' : 'Production'} Mode)`,
+);
 console.log('\x1b[36m%s\x1b[0m', '=====================================================\n');
 
 function runProcess(name, color, command, args, cwd) {
   const proc = spawn(command, args, {
     cwd,
     shell: true,
-    env: { ...process.env, FORCE_COLOR: 'true' },
+    env: {
+      ...process.env,
+      NODE_ENV: isDevelopment ? 'development' : 'production',
+      FORCE_COLOR: 'true',
+    },
   });
 
   const prefix = `\x1b[${color}m[${name}]\x1b[0m `;
@@ -46,21 +52,21 @@ function runProcess(name, color, command, args, cwd) {
   return proc;
 }
 
-// 1. Start Backend (NestJS API on port 4000)
+// 1. Start Backend
 const backend = runProcess(
   'BACKEND',
   '34', // Blue
-  'node',
-  ['dist/src/main.js'],
+  isDevelopment ? npmCmd : 'node',
+  isDevelopment ? ['run', 'start:dev'] : ['dist/src/main.js'],
   path.join(rootDir, 'backend')
 );
 
-// 2. Start Frontend (Next.js on port 3000)
+// 2. Start Frontend
 const frontend = runProcess(
   'FRONTEND',
   '32', // Green
-  npxCmd,
-  ['next', 'start', '-p', '3000'],
+  isDevelopment ? npmCmd : npxCmd,
+  isDevelopment ? ['run', 'dev'] : ['next', 'start'],
   path.join(rootDir, 'frontend')
 );
 

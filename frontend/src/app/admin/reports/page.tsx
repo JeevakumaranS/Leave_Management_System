@@ -1,53 +1,399 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../lib/auth-context';
-import { api } from '../../../lib/api';
+import { api, type ReportRecord } from '../../../lib/api';
 import { useToast } from '../../../components/Toast';
 import { Sidebar } from '../../../components/Sidebar';
 import { Navbar } from '../../../components/Navbar';
-import {
-  ChartIcon,
-  DownloadIcon,
-  RefreshIcon,
-  UsersIcon,
-  CheckIcon,
-} from '../../../components/Icons';
+import { AnimatedSelect } from '../../../components/AnimatedSelect';
+import { PAGE_SIZE, PaginationControls } from '../../../components/PaginationControls';
+import { DownloadIcon, RefreshIcon, SearchIcon, XIcon } from '../../../components/Icons';
+import { formatDate, formatDateTime } from '../../../lib/date';
+import { useLiveDataRefresh } from '../../../lib/use-live-data-refresh';
+
+type ReportView =
+  | 'EMPLOYEE'
+  | 'MONTHLY'
+  | 'YEARLY'
+  | 'PENDING'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CANCELLED'
+  | 'TYPE'
+  | 'DATE';
+
+type ReportFilters = {
+  search: string;
+  status: string;
+  leaveType: string;
+  dateFrom: string;
+  dateTo: string;
+};
+
+type ReportGroup = {
+  label: string;
+  sortKey: string;
+  employeeId?: string;
+  employeeName?: string;
+  designation?: string;
+  department?: string;
+  total: number;
+  approved: number;
+  pending: number;
+  rejected: number;
+  cancelled: number;
+  approvedDays: number;
+};
+
+type DisplayRow = Record<string, string | number>;
+type Column = { key: string; label: string };
+
+const initialFilters: ReportFilters = {
+  search: '',
+  status: '',
+  leaveType: '',
+  dateFrom: '',
+  dateTo: '',
+};
+
+const reportTabs: { id: ReportView; label: string }[] = [
+  { id: 'EMPLOYEE', label: 'Employee-wise' },
+  { id: 'MONTHLY', label: 'Monthly' },
+  { id: 'YEARLY', label: 'Yearly' },
+  { id: 'PENDING', label: 'Pending' },
+  { id: 'APPROVED', label: 'Approved' },
+  { id: 'REJECTED', label: 'Rejected' },
+  { id: 'CANCELLED', label: 'Cancelled' },
+  { id: 'TYPE', label: 'Leave type-wise' },
+  { id: 'DATE', label: 'Date-wise' },
+];
+
+const detailColumns: Column[] = [
+  { key: 'requestId', label: 'Request ID' },
+  { key: 'employeeId', label: 'Employee ID' },
+  { key: 'employeeName', label: 'Employee' },
+  { key: 'leaveType', label: 'Leave type' },
+  { key: 'startDate', label: 'Start date' },
+  { key: 'endDate', label: 'End date' },
+  { key: 'numberOfDays', label: 'Days' },
+  { key: 'status', label: 'Status' },
+  { key: 'submittedAt', label: 'Submitted' },
+];
+
+function getGroupKey(record: ReportRecord, view: ReportView) {
+  const start = new Date(record.startDate);
+  if (view === 'EMPLOYEE') return record.employeeId;
+  if (view === 'MONTHLY') {
+    return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
+  }
+  if (view === 'YEARLY') return String(start.getFullYear());
+  if (view === 'TYPE') return record.leaveType;
+  return start.toISOString().slice(0, 10);
+}
+
+function getGroupLabel(record: ReportRecord, view: ReportView, key: string) {
+  if (view === 'EMPLOYEE') return record.employeeName;
+  if (view === 'MONTHLY') {
+    return new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(
+      new Date(record.startDate),
+    );
+  }
+  if (view === 'YEARLY') return key;
+  if (view === 'TYPE') return record.leaveType.replace(/_/g, ' ');
+  return formatDate(record.startDate);
+}
+
+function getGroups(records: ReportRecord[], view: ReportView): ReportGroup[] {
+  const groups = new Map<string, ReportGroup>();
+  records.forEach((record) => {
+    const key = getGroupKey(record, view);
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        label: getGroupLabel(record, view, key),
+        sortKey: key,
+        total: 0,
+        approved: 0,
+        pending: 0,
+        rejected: 0,
+        cancelled: 0,
+        approvedDays: 0,
+      };
+      if (view === 'EMPLOYEE') {
+        group.employeeId = record.employeeId;
+        group.employeeName = record.employeeName;
+        group.designation = record.employee?.designation || 'Team Member';
+        group.department = record.employee?.department || '';
+      }
+      groups.set(key, group);
+    }
+
+    group.total += 1;
+    if (record.status === 'APPROVED') {
+      group.approved += 1;
+      group.approvedDays += record.numberOfDays;
+    } else if (record.status === 'PENDING') {
+      group.pending += 1;
+    } else if (record.status === 'REJECTED') {
+      group.rejected += 1;
+    } else if (record.status === 'CANCELLED') {
+      group.cancelled += 1;
+    }
+  });
+  return Array.from(groups.values());
+}
+
+function getReportTable(
+  view: ReportView,
+  records: ReportRecord[],
+): { columns: Column[]; rows: DisplayRow[] } {
+  if (view === 'PENDING' || view === 'APPROVED' || view === 'REJECTED' || view === 'CANCELLED' || view === 'DATE') {
+    const rows = records.map((record) => ({
+      requestId: record.requestId,
+      employeeId: record.employeeId,
+      employeeName: record.employeeName,
+      leaveType: record.otherNote
+        ? `${record.leaveType.replace(/_/g, ' ')}: ${record.otherNote}`
+        : record.leaveType.replace(/_/g, ' '),
+      startDate: record.startDate,
+      endDate: record.endDate,
+      numberOfDays: record.numberOfDays,
+      status: record.status,
+      submittedAt: record.submittedAt,
+    }));
+    return { columns: detailColumns, rows };
+  }
+
+  const groups = getGroups(records, view);
+  if (view === 'EMPLOYEE') {
+    return {
+      columns: [
+        { key: 'employeeId', label: 'Employee ID' },
+        { key: 'employeeName', label: 'Employee' },
+        { key: 'designation', label: 'Designation / Department' },
+        { key: 'total', label: 'Requests' },
+        { key: 'approved', label: 'Approved' },
+        { key: 'pending', label: 'Pending' },
+        { key: 'rejected', label: 'Rejected' },
+        { key: 'cancelled', label: 'Cancelled' },
+        { key: 'approvedDays', label: 'Approved days' },
+      ],
+      rows: groups.map((group) => ({ ...group })),
+    };
+  }
+
+  if (view === 'MONTHLY' || view === 'YEARLY') {
+    return {
+      columns: [
+        { key: 'label', label: view === 'MONTHLY' ? 'Month' : 'Year' },
+        { key: 'total', label: 'Requests' },
+        { key: 'approved', label: 'Approved' },
+        { key: 'pending', label: 'Pending' },
+        { key: 'rejected', label: 'Rejected' },
+        { key: 'cancelled', label: 'Cancelled' },
+        { key: 'approvedDays', label: 'Approved days' },
+      ],
+      rows: groups.map((group) => ({ ...group })),
+    };
+  }
+
+  return {
+    columns: [
+      { key: 'label', label: 'Leave type' },
+      { key: 'total', label: 'Requests' },
+      { key: 'approved', label: 'Approved' },
+      { key: 'pending', label: 'Pending' },
+      { key: 'rejected', label: 'Rejected' },
+      { key: 'cancelled', label: 'Cancelled' },
+      { key: 'approvedDays', label: 'Approved days' },
+    ],
+    rows: groups.map((group) => ({ ...group })),
+  };
+}
+
+function displayValue(key: string, value: string | number) {
+  if ((key === 'startDate' || key === 'endDate') && typeof value === 'string') {
+    return formatDate(value);
+  }
+  if (key === 'submittedAt' && typeof value === 'string') {
+    return formatDateTime(value);
+  }
+  return value;
+}
 
 export default function ReportsPage() {
   const router = useRouter();
   const { user, loading: authLoading, isAdmin } = useAuth();
   const { error } = useToast();
-
-  const [analytics, setAnalytics] = useState<any>(null);
+  const errorRef = useRef(error);
+  errorRef.current = error;
+  const [activeView, setActiveView] = useState<ReportView>('EMPLOYEE');
+  const [filters, setFilters] = useState<ReportFilters>(initialFilters);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [records, setRecords] = useState<ReportRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'EMPLOYEE' | 'MONTHLY' | 'TYPE'>('EMPLOYEE');
+  const [sort, setSort] = useState({ key: 'employeeName', direction: 'asc' as 'asc' | 'desc' });
+  const [page, setPage] = useState(1);
+
+  const forcedStatus = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].includes(activeView)
+    ? activeView
+    : '';
+  const reportQueryKey = JSON.stringify({
+    status: forcedStatus || filters.status,
+    leaveType: filters.leaveType,
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+  });
+  const previousQueryKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!authLoading) {
-      if (!user) {
-        router.push('/login');
-        return;
-      }
-      if (!isAdmin) {
-        router.push('/dashboard');
-        return;
-      }
-      loadAnalytics();
+    if (authLoading) return;
+    if (!user) {
+      router.push('/login');
+      return;
     }
-  }, [user, authLoading, isAdmin]);
+    if (!isAdmin) {
+      router.push('/dashboard');
+      return;
+    }
 
-  const loadAnalytics = async () => {
-    setLoading(true);
-    try {
-      const data = await api.reports.getAnalytics();
-      setAnalytics(data);
-    } catch (err: any) {
-      error(err.message || 'Failed to load leave analytics');
-    } finally {
-      setLoading(false);
+    let active = true;
+    const queryChanged = previousQueryKeyRef.current !== reportQueryKey;
+    previousQueryKeyRef.current = reportQueryKey;
+    const timer = window.setTimeout(() => {
+      if (queryChanged) {
+        setLoading(true);
+        setRecords([]);
+      }
+      api.reports
+        .getReportRecords({
+          leaveType: filters.leaveType,
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo,
+          status: forcedStatus || filters.status,
+        })
+        .then((data) => {
+          if (active) setRecords(data);
+        })
+        .catch((err: Error) => {
+          if (!active) return;
+          if (queryChanged) {
+            errorRef.current(err.message || 'Failed to load report data');
+          } else {
+            console.error('Automatic report refresh failed.', err);
+          }
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [
+    user,
+    authLoading,
+    isAdmin,
+    router,
+    filters.status,
+    filters.leaveType,
+    filters.dateFrom,
+    filters.dateTo,
+    activeView,
+    forcedStatus,
+    reportQueryKey,
+    refreshKey,
+  ]);
+
+  useLiveDataRefresh(
+    () => setRefreshKey((current) => current + 1),
+    Boolean(user && isAdmin),
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [activeView, filters, sort]);
+
+  const searchTerm = filters.search.trim().toLocaleLowerCase();
+  const matchingEmployeeIds = searchTerm
+    ? new Set(
+        records
+          .filter((record) =>
+            [
+              record.employeeId,
+              record.employeeName,
+              record.employee?.designation,
+              record.employee?.department,
+            ].some((value) => String(value ?? '').toLocaleLowerCase().includes(searchTerm)),
+          )
+          .map((record) => record.employeeId),
+      )
+    : null;
+  const matchingRecords = matchingEmployeeIds
+    ? records.filter((record) => matchingEmployeeIds.has(record.employeeId))
+    : records;
+  const { columns, rows } = getReportTable(activeView, matchingRecords);
+  const sortedRows = [...rows].sort((left, right) => {
+    const leftValue = left[sort.key] ?? '';
+    const rightValue = right[sort.key] ?? '';
+    let comparison: number;
+    if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+      comparison = leftValue - rightValue;
+    } else {
+      comparison = String(leftValue).localeCompare(String(rightValue), undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      });
     }
+    return sort.direction === 'asc' ? comparison : -comparison;
+  });
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE));
+  const paginatedRows = sortedRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+
+  const clearFilters = () => setFilters({ ...initialFilters });
+
+  const changeSort = (key: string) => {
+    setSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
+
+  const changeView = (view: ReportView) => {
+    setActiveView(view);
+    if (view === 'EMPLOYEE') setSort({ key: 'employeeName', direction: 'asc' });
+    else if (view === 'MONTHLY' || view === 'YEARLY') {
+      setSort({ key: 'sortKey', direction: 'desc' });
+    } else if (view === 'TYPE') setSort({ key: 'label', direction: 'asc' });
+    else setSort({ key: 'startDate', direction: 'desc' });
+  };
+
+  const exportCsv = () => {
+    const escapeCell = (value: string | number) => {
+      let text = String(value ?? '');
+      if (/^[=+\-@]/.test(text)) text = `'${text}`;
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+    const csv = [
+      columns.map((column) => escapeCell(column.label)).join(','),
+      ...sortedRows.map((row) =>
+        columns.map((column) => escapeCell(row[column.key] ?? '')).join(','),
+      ),
+    ].join('\r\n');
+    const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `leave-report-${activeView.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   if (authLoading || !isAdmin) return null;
@@ -57,225 +403,209 @@ export default function ReportsPage() {
       <Sidebar />
       <div className="main-wrapper">
         <Navbar />
-
         <main className="page-container">
           <div className="page-header">
             <div>
-              <h1 className="page-title">Reports & Executive Analytics</h1>
+              <h1 className="page-title">Leave Reports</h1>
               <p className="page-subtitle">
-                Company-wide leave utilization breakdowns, monthly trends, and CSV reporting (SRS Section 9)
+                Search, filter, sort, and export HR and Director leave reports.
               </p>
             </div>
-
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={loadAnalytics} className="btn btn-secondary btn-sm" title="Refresh">
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => setRefreshKey((current) => current + 1)}
+                className="btn btn-secondary btn-sm"
+              >
                 <RefreshIcon size={14} /> Refresh
               </button>
-              {/* Teal accented action button */}
-              <a
-                href={api.reports.exportCsvUrl()}
-                target="_blank"
-                rel="noreferrer"
-                className="btn btn-teal btn-sm"
+              <button type="button" onClick={exportCsv} className="btn btn-teal btn-sm" disabled={loading}>
+                <DownloadIcon size={16} /> Export CSV (Excel-compatible)
+              </button>
+            </div>
+          </div>
+
+          <section className="card" style={{ marginBottom: 18 }}>
+            <div style={{ overflowX: 'auto', padding: 12 }}>
+              <div className="reports-filter-grid">
+              <label>
+                <span className="form-label">Report view</span>
+                <AnimatedSelect
+                  value={activeView}
+                  onChange={(value) => {
+                    const selectedView = reportTabs.find((tab) => tab.id === value);
+                    if (selectedView) changeView(selectedView.id);
+                  }}
+                >
+                  {reportTabs.map((tab) => (
+                    <option key={tab.id} value={tab.id}>
+                      {tab.label}
+                    </option>
+                  ))}
+                </AnimatedSelect>
+              </label>
+              <label>
+                <span className="form-label">Search</span>
+                <div style={{ position: 'relative' }}>
+                  <SearchIcon
+                    size={15}
+                    color="#758195"
+                    style={{
+                      position: 'absolute',
+                      left: 12,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                  <input
+                    className="form-input"
+                    value={filters.search}
+                    placeholder="Employee ID, name, designation, department..."
+                    onChange={(event) =>
+                      setFilters((current) => ({ ...current, search: event.target.value }))
+                    }
+                    style={{ paddingLeft: 36, minWidth: 0 }}
+                  />
+                </div>
+              </label>
+              <label>
+                <span className="form-label">Status</span>
+                <AnimatedSelect
+                  value={forcedStatus || filters.status}
+                  disabled={Boolean(forcedStatus)}
+                  onChange={(value) =>
+                    setFilters((current) => ({ ...current, status: value }))
+                  }
+                >
+                  <option value="">All statuses</option>
+                  <option value="PENDING">Pending</option>
+                  <option value="APPROVED">Approved</option>
+                  <option value="REJECTED">Rejected</option>
+                  <option value="CANCELLED">Cancelled</option>
+                </AnimatedSelect>
+              </label>
+              <label>
+                <span className="form-label">Leave type</span>
+                <AnimatedSelect
+                  value={filters.leaveType}
+                  onChange={(value) =>
+                    setFilters((current) => ({ ...current, leaveType: value }))
+                  }
+                >
+                  <option value="">All leave types</option>
+                  <option value="CASUAL_LEAVE">Casual leave</option>
+                  <option value="SICK_LEAVE">Sick leave</option>
+                  <option value="EMERGENCY_LEAVE">Emergency leave</option>
+                  <option value="OTHER">Other</option>
+                </AnimatedSelect>
+              </label>
+              <label>
+                <span className="form-label">From date</span>
+                <input
+                  className="form-input"
+                  type="date"
+                  value={filters.dateFrom}
+                  onChange={(event) =>
+                    setFilters((current) => ({ ...current, dateFrom: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
+                <span className="form-label">To date</span>
+                <input
+                  className="form-input"
+                  type="date"
+                  value={filters.dateTo}
+                  onChange={(event) =>
+                    setFilters((current) => ({ ...current, dateTo: event.target.value }))
+                  }
+                />
+              </label>
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="btn btn-secondary btn-sm"
+                style={{ whiteSpace: 'nowrap' }}
               >
-                <DownloadIcon size={16} /> Export All Leaves (CSV)
-              </a>
+                <XIcon size={14} /> Clear
+              </button>
+              </div>
             </div>
-          </div>
+          </section>
 
-          {/* Navigation Tabs with Teal Accents */}
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '1px solid #E8EDF3', paddingBottom: '12px' }}>
-            <button
-              onClick={() => setActiveTab('EMPLOYEE')}
-              className={`btn btn-sm ${activeTab === 'EMPLOYEE' ? 'btn-teal' : 'btn-secondary'}`}
-            >
-              Employee-Wise Usage
-            </button>
-            <button
-              onClick={() => setActiveTab('MONTHLY')}
-              className={`btn btn-sm ${activeTab === 'MONTHLY' ? 'btn-teal' : 'btn-secondary'}`}
-            >
-              Monthly Distribution
-            </button>
-            <button
-              onClick={() => setActiveTab('TYPE')}
-              className={`btn btn-sm ${activeTab === 'TYPE' ? 'btn-teal' : 'btn-secondary'}`}
-            >
-              Leave Categories
-            </button>
-          </div>
-
-          {loading ? (
-            <div className="card" style={{ textAlign: 'center', padding: '48px' }}>
-              <div style={{ color: '#7E8798' }}>Calculating aggregate reports...</div>
-            </div>
-          ) : !analytics ? (
-            <div className="card">No report data available.</div>
-          ) : (
-            <>
-              {/* TAB 1: EMPLOYEE WISE SUMMARY */}
-              {activeTab === 'EMPLOYEE' && (
-                <div className="card">
-                  <div className="card-header">
-                    <div>
-                      <h2 className="card-title">Employee-Wise Leave Quota & History Breakdown</h2>
-                      <p className="card-subtitle">
-                        Per SRS 9: Approved days are counted against quota; rejected and cancelled requests are not counted.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="table-container">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Employee ID</th>
-                          <th>Full Name</th>
-                          <th>Department</th>
-                          <th>Annual Quota</th>
-                          <th>Used Days</th>
-                          <th>Remaining Balance</th>
-                          <th>Approved</th>
-                          <th>Pending</th>
-                          <th>Rejected</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {analytics.employeeSummary.map((e: any) => (
-                          <tr key={e.employeeId}>
-                            <td>
-                              <strong style={{ color: '#17223A' }}>{e.employeeId}</strong>
-                            </td>
-                            <td>{e.name}</td>
-                            <td>{e.department}</td>
-                            <td>{e.annualQuota} Days</td>
-                            <td>
-                              <span style={{ fontWeight: 700, color: e.usedDays > 8 ? '#D75A67' : '#17223A' }}>
-                                {e.usedDays} Days
-                              </span>
-                            </td>
-                            <td>
-                              <span className="badge badge-approved" style={{ fontSize: '12px' }}>
-                                {e.remainingDays} Days Left
-                              </span>
-                            </td>
-                            <td>
-                              <span style={{ color: '#1B9E76', fontWeight: 600 }}>{e.approvedCount}</span>
-                            </td>
-                            <td>
-                              <span style={{ color: '#D49422', fontWeight: 600 }}>{e.pendingCount}</span>
-                            </td>
-                            <td>
-                              <span style={{ color: '#D75A67', fontWeight: 600 }}>{e.rejectedCount}</span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 2: MONTHLY TRENDS */}
-              {activeTab === 'MONTHLY' && (
-                <div className="card">
-                  <div className="card-header">
-                    <div>
-                      <h2 className="card-title">Monthly Leave Application Trajectory ({new Date().getFullYear()})</h2>
-                      <p className="card-subtitle">Monthly breakdown of submitted, approved and rejected requests</p>
-                    </div>
-                  </div>
-
-                  <div className="table-container">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Month</th>
-                          <th>Total Submitted</th>
-                          <th>Approved</th>
-                          <th>Rejected</th>
-                          <th>Pending</th>
-                          <th>Approval Ratio</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {analytics.monthlyTrends.map((m: any) => {
-                          const ratio =
-                            m.total > 0 ? Math.round((m.approved / m.total) * 100) : 0;
-                          return (
-                            <tr key={m.monthIndex}>
-                              <td>
-                                <strong>{m.month}</strong>
-                              </td>
-                              <td>{m.total}</td>
-                              <td>
-                                <span style={{ color: '#1B9E76', fontWeight: 600 }}>{m.approved}</span>
-                              </td>
-                              <td>
-                                <span style={{ color: '#D75A67', fontWeight: 600 }}>{m.rejected}</span>
-                              </td>
-                              <td>
-                                <span style={{ color: '#D49422', fontWeight: 600 }}>{m.pending}</span>
-                              </td>
-                              <td>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                  <div style={{ flex: 1, maxWidth: '100px', height: '6px', background: '#E8EDF3', borderRadius: '3px', overflow: 'hidden' }}>
-                                    <div style={{ width: `${ratio}%`, height: '100%', background: '#1B9E76' }} />
-                                  </div>
-                                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#1B9E76' }}>{ratio}%</span>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 3: LEAVE TYPE DISTRIBUTION */}
-              {activeTab === 'TYPE' && (
-                <div className="card">
-                  <div className="card-header">
-                    <div>
-                      <h2 className="card-title">Approved Leave Utilization by Category</h2>
-                      <p className="card-subtitle">Breakdown of days taken by leave type (Casual, Sick, Emergency, Other)</p>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
-                    {Object.entries(analytics.leaveTypeDistribution).map(([type, data]: [string, any], idx) => {
-                      const colors = ['#2769D7', '#287C78', '#D49422', '#1B9E76'];
-                      const curColor = colors[idx % colors.length];
-                      return (
-                        <div
-                          key={type}
+          <section className="card">
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    {columns.map((column) => (
+                      <th key={column.key} aria-sort={sort.key === column.key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                        <button
+                          type="button"
+                          onClick={() => changeSort(column.key)}
                           style={{
-                            padding: '20px',
-                            border: '1px solid #E8EDF3',
-                            borderRadius: '8px',
-                            backgroundColor: '#FFFFFF',
-                            boxShadow: '0 1px 3px rgba(23,34,58,0.05)',
+                            background: 'none',
+                            border: 0,
+                            color: 'inherit',
+                            cursor: 'pointer',
+                            font: 'inherit',
+                            fontWeight: 700,
+                            padding: 0,
+                            whiteSpace: 'nowrap',
                           }}
                         >
-                          <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#7E8798', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            {type.replace('_', ' ')}
-                          </div>
-                          <div style={{ fontSize: '28px', fontWeight: 800, color: curColor, marginTop: '8px' }}>
-                            {data.totalDays} <span style={{ fontSize: '14px', color: '#7E8798', fontWeight: 500 }}>Days</span>
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#7E8798', marginTop: '4px' }}>
-                            Across <strong>{data.count}</strong> approved applications
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
+                          {column.label}
+                          {sort.key === column.key ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : ''}
+                        </button>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td colSpan={columns.length} style={{ textAlign: 'center', padding: 36 }}>
+                        Loading report data...
+                      </td>
+                    </tr>
+                  ) : sortedRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={columns.length} style={{ textAlign: 'center', padding: 36, color: '#758195' }}>
+                        No leave records match the selected filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedRows.map((row, index) => (
+                      <tr key={String(row.requestId || row.employeeId || row.sortKey || row.label || index)}>
+                        {columns.map((column) => (
+                          <td key={column.key}>
+                            {activeView === 'EMPLOYEE' && column.key === 'designation' ? (
+                              <>
+                                <div>{row.designation || 'Team Member'}</div>
+                                <div style={{ fontSize: '11.5px', color: '#64748b' }}>
+                                  {row.department}
+                                </div>
+                              </>
+                            ) : (
+                              displayValue(column.key, row[column.key] ?? '')
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {!loading && sortedRows.length > 0 && (
+              <PaginationControls
+                currentPage={page}
+                totalItems={sortedRows.length}
+                onPageChange={setPage}
+              />
+            )}
+          </section>
         </main>
       </div>
     </div>

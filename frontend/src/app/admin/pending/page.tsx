@@ -8,6 +8,10 @@ import { useToast } from '../../../components/Toast';
 import { Sidebar } from '../../../components/Sidebar';
 import { Navbar } from '../../../components/Navbar';
 import { Modal } from '../../../components/Modal';
+import { PAGE_SIZE, PaginationControls } from '../../../components/PaginationControls';
+import { formatDate, formatDateTime } from '../../../lib/date';
+import { getReasonTextError, normalizeReasonText } from '../../../lib/reason-validation';
+import { useLiveDataRefresh } from '../../../lib/use-live-data-refresh';
 import {
   ClockIcon,
   CheckIcon,
@@ -22,6 +26,8 @@ export default function PendingApprovalsPage() {
   const { success, error } = useToast();
 
   const [pendingLeaves, setPendingLeaves] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
   // Decision Modal
@@ -40,21 +46,30 @@ export default function PendingApprovalsPage() {
         router.push('/dashboard');
         return;
       }
-      loadPendingLeaves();
+      loadPendingLeaves(page);
     }
-  }, [user, authLoading, isAdmin]);
+  }, [user, authLoading, isAdmin, page]);
 
-  const loadPendingLeaves = async () => {
-    setLoading(true);
+  const loadPendingLeaves = async (targetPage = page, silent = false) => {
+    if (!silent) setLoading(true);
     try {
-      const res = await api.leaves.getAll({ status: 'PENDING' });
+      const res = await api.leaves.getAll({
+        status: 'PENDING',
+        page: targetPage,
+        limit: PAGE_SIZE,
+      });
       setPendingLeaves(res.items);
+      setTotal(res.total);
+      setPage(res.page);
     } catch (err: any) {
+      if (silent) throw err;
       error(err.message || 'Failed to load pending requests');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  useLiveDataRefresh(() => loadPendingLeaves(page, true), Boolean(user && isAdmin));
 
   const handleOpenDecision = (req: any, action: 'APPROVE' | 'REJECT') => {
     setSelectedRequest(req);
@@ -64,25 +79,29 @@ export default function PendingApprovalsPage() {
 
   const handleConfirmDecision = async () => {
     if (!selectedRequest) return;
-    if (decisionAction === 'REJECT' && !rejectionRemarks.trim()) {
-      error('Rejection remarks are mandatory to explain why the leave is rejected (SRS 6.3).');
-      return;
+    if (decisionAction === 'REJECT') {
+      const remarksError = getReasonTextError(rejectionRemarks, 'Rejection remarks');
+      if (remarksError) {
+        error(remarksError);
+        return;
+      }
     }
 
     setSubmitting(true);
     try {
       await api.approvals.decidePortal(selectedRequest.requestId, {
         action: decisionAction,
-        rejectionRemarks: decisionAction === 'REJECT' ? rejectionRemarks : undefined,
+        rejectionRemarks:
+          decisionAction === 'REJECT' ? normalizeReasonText(rejectionRemarks) : undefined,
       });
 
       success(
         `Leave request ${selectedRequest.requestId} was successfully ${
           decisionAction === 'APPROVE' ? 'APPROVED' : 'REJECTED'
-        }! Notification email sent.`,
+        }.`,
       );
       setSelectedRequest(null);
-      loadPendingLeaves();
+      loadPendingLeaves(page);
     } catch (err: any) {
       error(err.message || 'Failed to record approval decision');
     } finally {
@@ -107,7 +126,7 @@ export default function PendingApprovalsPage() {
               </p>
             </div>
 
-            <button onClick={loadPendingLeaves} className="btn btn-secondary btn-sm" title="Refresh">
+            <button onClick={() => loadPendingLeaves()} className="btn btn-secondary btn-sm" title="Refresh">
               <RefreshIcon size={14} /> Refresh Queue
             </button>
           </div>
@@ -148,7 +167,7 @@ export default function PendingApprovalsPage() {
                         </div>
                       </td>
                       <td>
-                        <div style={{ fontWeight: 600 }}>{l.employeeName}</div>
+                        <div style={{ fontWeight: 600, color: '#7E8798' }}>{l.employeeName}</div>
                         <div style={{ fontSize: '12px', color: '#64748b' }}>
                           ID: {l.employeeId} • {l.employeeEmail}
                         </div>
@@ -164,16 +183,27 @@ export default function PendingApprovalsPage() {
                           {l.numberOfDays} Day{l.numberOfDays > 1 ? 's' : ''} ({l.duration.replace(/_/g, ' ')})
                         </div>
                         <div style={{ fontSize: '12px', color: '#64748b' }}>
-                          {new Date(l.startDate).toLocaleDateString()}
-                          {l.startDate !== l.endDate ? ` to ${new Date(l.endDate).toLocaleDateString()}` : ''}
+                          {formatDate(l.startDate)}
+                          {l.startDate !== l.endDate ? ` to ${formatDate(l.endDate)}` : ''}
                         </div>
                       </td>
-                      <td style={{ maxWidth: '280px' }}>
-                        <div style={{ fontSize: '13px', lineHeight: 1.4 }}>{l.reason}</div>
+                      <td style={{ width: '280px', maxWidth: '280px' }}>
+                        <div
+                          title={l.reason}
+                          style={{
+                            fontSize: '13px',
+                            lineHeight: 1.4,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {l.reason}
+                        </div>
                       </td>
                       <td>
                         <div style={{ fontSize: '12px', color: '#64748b' }}>
-                          {new Date(l.submittedAt).toLocaleString()}
+                          {formatDateTime(l.submittedAt)}
                         </div>
                       </td>
                       <td style={{ textAlign: 'right' }}>
@@ -197,6 +227,9 @@ export default function PendingApprovalsPage() {
                 </tbody>
               </table>
             </div>
+          )}
+          {!loading && pendingLeaves.length > 0 && (
+            <PaginationControls currentPage={page} totalItems={total} onPageChange={setPage} />
           )}
         </main>
       </div>
@@ -231,13 +264,26 @@ export default function PendingApprovalsPage() {
                 <span className="badge badge-pending">PENDING</span>
               </div>
               <div style={{ fontSize: '13px', color: '#334155' }}>
-                <strong>Employee:</strong> {selectedRequest.employeeName} ({selectedRequest.employeeId})
+                <strong>Employee:</strong>{' '}
+                <span style={{ color: '#7E8798' }}>
+                  {selectedRequest.employeeName} ({selectedRequest.employeeId})
+                </span>
               </div>
               <div style={{ fontSize: '13px', color: '#334155' }}>
-                <strong>Dates:</strong> {new Date(selectedRequest.startDate).toLocaleDateString()} to {new Date(selectedRequest.endDate).toLocaleDateString()} ({selectedRequest.numberOfDays} days)
+                <strong>Dates:</strong> {formatDate(selectedRequest.startDate)} to {formatDate(selectedRequest.endDate)} ({selectedRequest.numberOfDays} days)
               </div>
               <div style={{ fontSize: '13px', color: '#334155', marginTop: '6px' }}>
-                <strong>Reason:</strong> {selectedRequest.reason}
+                <strong>Reason:</strong>
+                <div
+                  style={{
+                    maxWidth: '100%',
+                    overflowWrap: 'anywhere',
+                    whiteSpace: 'pre-wrap',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {selectedRequest.reason}
+                </div>
               </div>
             </div>
 
@@ -252,10 +298,13 @@ export default function PendingApprovalsPage() {
                   placeholder="Provide explicit reason for rejecting this request (included in employee notification email)..."
                   value={rejectionRemarks}
                   onChange={(e) => setRejectionRemarks(e.target.value)}
+                  onBlur={(e) => setRejectionRemarks(normalizeReasonText(e.target.value))}
+                  minLength={3}
+                  maxLength={250}
                   autoFocus
                 />
                 <div className="form-helper">
-                  Required per SRS Section 6.3 & 6.5.
+                  Enter 3–250 characters using letters, numbers, spaces, or basic punctuation.
                 </div>
               </div>
             ) : (
@@ -264,7 +313,7 @@ export default function PendingApprovalsPage() {
                   You are deciding this request as <strong>{user?.name} ({user?.role})</strong>.
                 </p>
                 <p style={{ marginTop: '8px', color: '#64748b' }}>
-                  Upon approval, the employee&apos;s leave balance will be updated and an automated approval email will be sent to <strong>{selectedRequest.employeeEmail}</strong>.
+                  An automated approval email will be sent to <strong>{selectedRequest.employeeEmail}</strong>.
                 </p>
               </div>
             )}

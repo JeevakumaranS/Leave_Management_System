@@ -28,11 +28,12 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     try {
-      const payload = this.jwtService.verify(token, {
-        secret: process.env.JWT_SECRET || 'durozen-secure-leave-system-jwt-secret-key-2026',
-      });
+      const payload = this.jwtService.verify<{ sub: string }>(token);
+      if (typeof payload.sub !== 'string') {
+        throw new UnauthorizedException('Invalid authentication token subject');
+      }
 
-      const employee = await this.prisma.employee.findUnique({
+      const employee = await this.prisma.user.findUnique({
         where: { id: payload.sub },
       });
 

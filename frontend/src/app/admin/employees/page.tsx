@@ -8,12 +8,17 @@ import { useToast } from '../../../components/Toast';
 import { Sidebar } from '../../../components/Sidebar';
 import { Navbar } from '../../../components/Navbar';
 import { Modal } from '../../../components/Modal';
+import { AnimatedSelect } from '../../../components/AnimatedSelect';
+import { PAGE_SIZE, PaginationControls } from '../../../components/PaginationControls';
+import { useLiveDataRefresh } from '../../../lib/use-live-data-refresh';
 import {
   UsersIcon,
   PlusIcon,
   RefreshIcon,
   CheckIcon,
   XIcon,
+  EyeIcon,
+  EyeOffIcon,
 } from '../../../components/Icons';
 
 export default function EmployeeManagementPage() {
@@ -22,6 +27,8 @@ export default function EmployeeManagementPage() {
   const { success, error } = useToast();
 
   const [employees, setEmployees] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -35,10 +42,13 @@ export default function EmployeeManagementPage() {
   const [formName, setFormName] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formStatus, setFormStatus] = useState<'ACTIVE' | 'INACTIVE'>('ACTIVE');
+  const [formRole, setFormRole] = useState<'EMPLOYEE' | 'HR'>('EMPLOYEE');
   const [formDept, setFormDept] = useState('');
   const [formDesignation, setFormDesignation] = useState('');
   const [formPassword, setFormPassword] = useState('');
+  const [showFormPassword, setShowFormPassword] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading) {
@@ -50,34 +60,46 @@ export default function EmployeeManagementPage() {
         router.push('/dashboard');
         return;
       }
-      loadEmployees();
+      const timer = window.setTimeout(() => {
+        loadEmployees();
+      }, 250);
+      return () => window.clearTimeout(timer);
     }
-  }, [user, authLoading, isAdmin, statusFilter]);
+  }, [user, authLoading, isAdmin, statusFilter, search, page]);
 
-  const loadEmployees = async () => {
-    setLoading(true);
+  const loadEmployees = async (targetPage = page, silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const data = await api.employees.getAll({
         search: search.trim() || undefined,
         status: statusFilter || undefined,
+        page: targetPage,
+        limit: PAGE_SIZE,
       });
-      setEmployees(data);
+      setEmployees(data.items);
+      setTotal(data.total);
+      setPage(data.page);
     } catch (err: any) {
-      error(err.message || 'Failed to load employee directory');
+      if (silent) throw err;
+      error(err.message || 'Failed to load employee management');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
-  const handleOpenAdd = () => {
+  useLiveDataRefresh(() => loadEmployees(page, true), Boolean(user && isAdmin));
+
+  const handleOpenAdd = (role: 'EMPLOYEE' | 'HR' = 'EMPLOYEE') => {
     setEditingEmployee(null);
-    setFormId(`EMP-${100 + employees.length + 1}`);
+    setFormRole(role);
+    setFormId(`${role === 'HR' ? 'HR' : 'EMP'}-${100 + total + 1}`);
     setFormName('');
     setFormEmail('');
     setFormStatus('ACTIVE');
-    setFormDept('Engineering');
-    setFormDesignation('Software Engineer');
-    setFormPassword('Password@123');
+    setFormDept(role === 'HR' ? 'Human Resources' : 'Engineering');
+    setFormDesignation(role === 'HR' ? 'HR Administrator' : 'Software Engineer');
+    setFormPassword('');
+    setShowFormPassword(false);
     setIsModalOpen(true);
   };
 
@@ -90,6 +112,7 @@ export default function EmployeeManagementPage() {
     setFormDept(emp.department || '');
     setFormDesignation(emp.designation || '');
     setFormPassword('');
+    setShowFormPassword(false);
     setIsModalOpen(true);
   };
 
@@ -103,11 +126,44 @@ export default function EmployeeManagementPage() {
     }
   };
 
+  const handleDelete = async (emp: any) => {
+    if (emp.status === 'ACTIVE') {
+      error('Deactivate this employee before deleting the account.');
+      return;
+    }
+
+    const leaveRequestCount = emp._count?.leaveRequests || 0;
+    const confirmed = window.confirm(
+      `Permanently delete ${emp.name} (${emp.employeeId})? This will also permanently delete ${leaveRequestCount} leave request(s) and their related records. This action cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingId(emp.id);
+    try {
+      await api.employees.delete(emp.id);
+      success(`${emp.name} (${emp.employeeId}) was deleted.`);
+      setIsModalOpen(false);
+      if (employees.length === 1 && page > 1) {
+        setPage(page - 1);
+      } else {
+        await loadEmployees();
+      }
+    } catch (err: any) {
+      error(err.message || 'Failed to delete account');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!formId.trim() || !formName.trim() || !formEmail.trim()) {
       error('Employee ID, Name and Email are mandatory fields.');
+      return;
+    }
+    if (!editingEmployee && !formPassword.trim()) {
+      error('Initial password is required.');
       return;
     }
 
@@ -127,16 +183,22 @@ export default function EmployeeManagementPage() {
           employeeId: formId,
           name: formName,
           email: formEmail,
+          role: formRole,
           status: formStatus,
           department: formDept,
           designation: formDesignation,
-          password: formPassword || 'Password@123',
+          password: formPassword,
         });
-        success(`New employee ${formName} (${formId}) created! Ready in leave application dropdown.`);
+        success(
+          formRole === 'HR'
+            ? `HR account ${formName} (${formId}) created successfully.`
+            : `New employee ${formName} (${formId}) created! Ready in leave application dropdown.`,
+        );
       }
 
       setIsModalOpen(false);
-      loadEmployees();
+      if (page === 1) loadEmployees(1);
+      else setPage(1);
     } catch (err: any) {
       error(err.message || 'Failed to save employee record');
     } finally {
@@ -155,51 +217,71 @@ export default function EmployeeManagementPage() {
         <main className="page-container">
           <div className="page-header">
             <div>
-              <h1 className="page-title">Employee Directory & Account Management</h1>
+              <h1 className="page-title">Employee Management</h1>
               <p className="page-subtitle">
-                Register new employees, update details, or toggle active/inactive status (SRS Section 3)
+                Register new employees, update details, or toggle active/inactive status
               </p>
             </div>
 
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={loadEmployees} className="btn btn-secondary btn-sm" title="Refresh">
+            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '10px' }}>
+              <button onClick={() => loadEmployees()} className="btn btn-secondary btn-sm" title="Refresh">
                 <RefreshIcon size={14} /> Refresh
               </button>
-              <button onClick={handleOpenAdd} className="btn btn-primary btn-sm">
+              <button onClick={() => handleOpenAdd('HR')} className="btn btn-secondary btn-sm">
+                <PlusIcon size={16} /> Add HR
+              </button>
+              <button onClick={() => handleOpenAdd()} className="btn btn-primary btn-sm">
                 <PlusIcon size={16} /> Add Employee
               </button>
             </div>
           </div>
 
-          {/* Search Bar */}
-          <div className="card" style={{ padding: '16px 20px', marginBottom: '20px' }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'center' }}>
-              <div style={{ flex: '1', minWidth: '240px' }}>
+          {/* Search Bar - Single Row */}
+          <div className="card compact-search-card" style={{ padding: '8px 12px', marginBottom: '14px' }}>
+            <div className="compact-search-row">
+              <div style={{ flex: '1', minWidth: '130px' }}>
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="Search by Employee ID, Name, Department or Email..."
+                  placeholder="Auto-search Employee ID, Name, Department..."
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  onKeyUp={(e) => e.key === 'Enter' && loadEmployees()}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setPage(1);
+                  }}
+                  style={{ height: '32px', fontSize: '12px', padding: '4px 8px' }}
                 />
               </div>
 
-              <div style={{ width: '160px' }}>
-                <select
-                  className="form-select"
+              <div style={{ width: '130px', flexShrink: 0 }}>
+                <AnimatedSelect
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
+                  onChange={(value) => {
+                    setStatusFilter(value);
+                    setPage(1);
+                  }}
                 >
                   <option value="">All Statuses</option>
                   <option value="ACTIVE">Active Only</option>
                   <option value="INACTIVE">Inactive Only</option>
-                </select>
+                </AnimatedSelect>
               </div>
 
-              <button onClick={loadEmployees} className="btn btn-secondary">
-                Search
-              </button>
+              {(search || statusFilter) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch('');
+                    setStatusFilter('');
+                    setPage(1);
+                  }}
+                  className="btn btn-secondary btn-sm"
+                  title="Clear filters"
+                  style={{ height: '32px', padding: '0 8px', fontSize: '12px', whiteSpace: 'nowrap', flexShrink: 0 }}
+                >
+                  <XIcon size={12} /> Clear
+                </button>
+              )}
             </div>
           </div>
 
@@ -222,10 +304,9 @@ export default function EmployeeManagementPage() {
                     <th>Full Name</th>
                     <th>Corporate Email</th>
                     <th>Role</th>
-                    <th>Department / Designation</th>
+                    <th>Designation / Department</th>
                     <th>Account Status</th>
-                    <th>Quota (Used / Total)</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
+                    <th style={{ textAlign: 'center', minWidth: '190px' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -244,32 +325,33 @@ export default function EmployeeManagementPage() {
                         </span>
                       </td>
                       <td>
-                        <div>{emp.department}</div>
-                        <div style={{ fontSize: '11.5px', color: '#64748b' }}>{emp.designation || 'Team Member'}</div>
+                        <div>{emp.designation || 'Team Member'}</div>
+                        <div style={{ fontSize: '11.5px', color: '#64748b' }}>{emp.department}</div>
                       </td>
                       <td>
                         <span className={`badge badge-${emp.status.toLowerCase()}`}>
                           {emp.status}
                         </span>
                       </td>
-                      <td>
-                        <span style={{ fontWeight: 600 }}>{emp.usedQuota}</span> / {emp.annualQuota} Days
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <div style={{ display: 'inline-flex', gap: '6px' }}>
-                          <button
-                            onClick={() => handleOpenEdit(emp)}
-                            className="btn btn-secondary btn-sm"
-                          >
-                            Edit
-                          </button>
+                      <td style={{ textAlign: 'center' }}>
+                        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap' }}>
                           {emp.role !== 'DIRECTOR' && (
                             <button
                               onClick={() => handleToggleStatus(emp)}
                               className={`btn btn-sm ${emp.status === 'ACTIVE' ? 'btn-danger' : 'btn-success'}`}
                               title={emp.status === 'ACTIVE' ? 'Deactivate Employee' : 'Activate Employee'}
+                              style={{ width: 96, justifyContent: 'center' }}
                             >
                               {emp.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                            </button>
+                          )}
+                          {!(user?.role === 'HR' && emp.role === 'DIRECTOR') && (
+                            <button
+                              onClick={() => handleOpenEdit(emp)}
+                              className="btn btn-secondary btn-sm"
+                              style={{ width: 68, justifyContent: 'center' }}
+                            >
+                              Edit
                             </button>
                           )}
                         </div>
@@ -280,6 +362,9 @@ export default function EmployeeManagementPage() {
               </table>
             </div>
           )}
+          {!loading && employees.length > 0 && (
+            <PaginationControls currentPage={page} totalItems={total} onPageChange={setPage} />
+          )}
         </main>
       </div>
 
@@ -287,9 +372,27 @@ export default function EmployeeManagementPage() {
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingEmployee ? `Edit Employee - ${editingEmployee.employeeId}` : 'Add New Employee'}
+        title={
+          editingEmployee
+            ? `Edit Employee - ${editingEmployee.employeeId}`
+            : formRole === 'HR'
+            ? 'Add New HR User'
+            : 'Add New Employee'
+        }
       >
         <form onSubmit={handleSave}>
+          {!editingEmployee && (
+            <div className="form-group">
+              <label className="form-label">Account Role</label>
+              <input
+                type="text"
+                className="form-input"
+                value={formRole === 'HR' ? 'HR Administrator' : 'Employee'}
+                disabled
+              />
+            </div>
+          )}
+
           <div className="form-group">
             <label className="form-label">
               Employee ID <span className="required">*</span>
@@ -303,7 +406,7 @@ export default function EmployeeManagementPage() {
               disabled={!!editingEmployee}
               required
             />
-            <div className="form-helper">SRS 3.1: Mandatory and unique identifier</div>
+            <div className="form-helper">Unique employee identification code</div>
           </div>
 
           <div className="form-group">
@@ -318,7 +421,7 @@ export default function EmployeeManagementPage() {
               onChange={(e) => setFormName(e.target.value)}
               required
             />
-            <div className="form-helper">SRS 3.1: Mandatory full legal/registered name</div>
+            <div className="form-helper">Full legal/registered name</div>
           </div>
 
           <div className="form-group">
@@ -328,15 +431,15 @@ export default function EmployeeManagementPage() {
             <input
               type="email"
               className="form-input"
-              placeholder="e.g. john.doe@durozen.in"
+              placeholder="e.g. john.doe@example.com"
               value={formEmail}
               onChange={(e) => setFormEmail(e.target.value)}
               required
             />
-            <div className="form-helper">SRS 3.1: Mandatory, valid and unique corporate email</div>
+            <div className="form-helper">Valid corporate email address</div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+          <div className="employee-form-grid">
             <div className="form-group">
               <label className="form-label">Department</label>
               <input
@@ -364,42 +467,103 @@ export default function EmployeeManagementPage() {
             <label className="form-label">
               Account Status <span className="required">*</span>
             </label>
-            <select
-              className="form-select"
+            <AnimatedSelect
               value={formStatus}
-              onChange={(e) => setFormStatus(e.target.value as any)}
+              onChange={(value) => {
+                if (value === 'ACTIVE' || value === 'INACTIVE') setFormStatus(value);
+              }}
             >
               <option value="ACTIVE">Active (Can log in & apply for leaves)</option>
               <option value="INACTIVE">Inactive (Deactivated • Cannot apply for leaves)</option>
-            </select>
-            <div className="form-helper">SRS 3.1 & 3.4: Deactivation preserves leave history (BR-16)</div>
+            </AnimatedSelect>
+            <div className="form-helper">Deactivating an account preserves all past leave records</div>
           </div>
 
           {!editingEmployee && (
             <div className="form-group">
-              <label className="form-label">Initial Password</label>
-              <input
-                type="password"
-                className="form-input"
-                placeholder="Default: Password@123"
-                value={formPassword}
-                onChange={(e) => setFormPassword(e.target.value)}
-              />
-              <div className="form-helper">Leave empty for default &apos;Password@123&apos;</div>
+              <label className="form-label">
+                Initial Password <span className="required">*</span>
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showFormPassword ? 'text' : 'password'}
+                  className="form-input"
+                  placeholder="Enter an initial password"
+                  value={formPassword}
+                  onChange={(e) => setFormPassword(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                  style={{ paddingRight: '44px' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowFormPassword((visible) => !visible)}
+                  aria-label={showFormPassword ? 'Hide initial password' : 'Show initial password'}
+                  title={showFormPassword ? 'Hide password' : 'Show password'}
+                  style={{
+                    position: 'absolute',
+                    right: '10px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    border: 0,
+                    padding: 4,
+                    background: 'transparent',
+                    color: '#64748b',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {showFormPassword ? <EyeOffIcon size={18} /> : <EyeIcon size={18} />}
+                </button>
+              </div>
+              <div className="form-helper">Set the password for this account.</div>
             </div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setIsModalOpen(false)}
-            >
-              Cancel
-            </button>
-            <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? 'Saving...' : editingEmployee ? 'Save Changes' : 'Create Employee'}
-            </button>
+          <div className="employee-form-actions">
+            {editingEmployee && editingEmployee.role !== 'DIRECTOR' && editingEmployee.id !== user?.id ? (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(editingEmployee)}
+                  className="btn btn-danger"
+                  disabled={
+                    saving ||
+                    deletingId === editingEmployee.id ||
+                    editingEmployee.status === 'ACTIVE'
+                  }
+                  title={
+                    editingEmployee.status === 'ACTIVE'
+                      ? 'Deactivate the employee before deleting the account'
+                      : 'Permanently delete this employee and their associated records'
+                  }
+                >
+                  {deletingId === editingEmployee.id ? <><XIcon size={14} /> Deleting...</> : <><XIcon size={14} /> Delete Account</>}
+                </button>
+                {editingEmployee.status === 'ACTIVE' && (
+                  <div className="form-helper">Deactivate this employee to enable deletion.</div>
+                )}
+              </div>
+            ) : <span />}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setIsModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>
+                {saving
+                  ? 'Saving...'
+                  : editingEmployee
+                  ? 'Save Changes'
+                  : formRole === 'HR'
+                  ? 'Create HR Account'
+                  : 'Create Employee'}
+              </button>
+            </div>
           </div>
         </form>
       </Modal>

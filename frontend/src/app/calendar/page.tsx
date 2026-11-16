@@ -9,6 +9,8 @@ import { Sidebar } from '../../components/Sidebar';
 import { Navbar } from '../../components/Navbar';
 import { Modal } from '../../components/Modal';
 import { CalendarIcon, RefreshIcon } from '../../components/Icons';
+import { formatDate } from '../../lib/date';
+import { useLiveDataRefresh } from '../../lib/use-live-data-refresh';
 
 export default function CalendarPage() {
   const router = useRouter();
@@ -34,17 +36,20 @@ export default function CalendarPage() {
     }
   }, [user, authLoading, month, year]);
 
-  const loadCalendarLeaves = async () => {
-    setLoading(true);
+  const loadCalendarLeaves = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const data = await api.leaves.getCalendar(month + 1, year);
       setLeaves(data);
     } catch (err: any) {
+      if (silent) throw err;
       error('Failed to load leave calendar');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  useLiveDataRefresh(() => loadCalendarLeaves(true), Boolean(user));
 
   const handlePrevMonth = () => {
     setCurrentDate(new Date(year, month - 1, 1));
@@ -122,14 +127,18 @@ export default function CalendarPage() {
         <main className="page-container">
           <div className="page-header">
             <div>
-              <h1 className="page-title">Company Leave Calendar</h1>
+              <h1 className="page-title">
+                {user?.role === 'EMPLOYEE' ? 'My Leave Calendar' : 'Company Leave Calendar'}
+              </h1>
               <p className="page-subtitle">
-                Scheduled and approved employee absences across Durozen Technologies
+                {user?.role === 'EMPLOYEE'
+                  ? 'Your scheduled and approved leave.'
+                  : 'Scheduled and approved employee absences.'}
               </p>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <button onClick={loadCalendarLeaves} className="btn btn-secondary btn-sm" title="Refresh">
+              <button onClick={() => loadCalendarLeaves()} className="btn btn-secondary btn-sm" title="Refresh">
                 <RefreshIcon size={14} /> Refresh
               </button>
               <div style={{ display: 'flex', gap: '4px', background: '#f1f5f9', padding: '3px', borderRadius: '6px' }}>
@@ -152,7 +161,7 @@ export default function CalendarPage() {
                 {monthNames[month]} {year}
               </h2>
               <div style={{ fontSize: '13px', color: '#64748b' }}>
-                Total <strong>{leaves.length}</strong> approved leave periods in {monthNames[month]}
+                {user?.role === 'EMPLOYEE' ? 'Your' : 'Total'} <strong>{leaves.length}</strong> approved leave periods in {monthNames[month]}
               </div>
             </div>
 
@@ -230,7 +239,7 @@ export default function CalendarPage() {
       <Modal
         isOpen={!!selectedDayEvents}
         onClose={() => setSelectedDayEvents(null)}
-        title={selectedDayEvents ? `Leaves on ${selectedDayEvents.date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}` : ''}
+        title={selectedDayEvents ? `Leaves on ${formatDate(selectedDayEvents.date)}` : ''}
         footer={
           <button className="btn btn-secondary btn-sm" onClick={() => setSelectedDayEvents(null)}>
             Close
@@ -261,7 +270,7 @@ export default function CalendarPage() {
                     <strong>Duration:</strong> {e.numberOfDays} Day(s) ({e.duration.replace(/_/g, ' ')})
                   </div>
                   <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
-                    <strong>Period:</strong> {new Date(e.startDate).toLocaleDateString()} to {new Date(e.endDate).toLocaleDateString()}
+                    <strong>Period:</strong> {formatDate(e.startDate)} to {formatDate(e.endDate)}
                   </div>
                 </div>
               ))}

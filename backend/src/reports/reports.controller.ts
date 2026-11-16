@@ -1,6 +1,6 @@
 import { Controller, Get, Query, Res, UseGuards, Request } from '@nestjs/common';
 import { Response } from 'express';
-import { ReportsService } from './reports.service';
+import { ReportFilters, ReportsService } from './reports.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -28,6 +28,13 @@ export class ReportsController {
   @Roles(Role.HR, Role.DIRECTOR)
   async getAnalytics() {
     return this.reportsService.getLeaveAnalytics();
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get('records')
+  @Roles(Role.HR, Role.DIRECTOR)
+  async getReportRecords(@Query() filters: ReportFilters) {
+    return this.reportsService.getReportRecords(filters);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

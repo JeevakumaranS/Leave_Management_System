@@ -1,10 +1,127 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { EmployeeStatus, LeaveStatus } from '@prisma/client';
+import { BadRequestException, Injectable } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { EmployeeStatus, LeaveStatus, LeaveType, Prisma } from "@prisma/client";
+
+export interface ReportFilters {
+  search?: string;
+  employeeId?: string;
+  status?: string;
+  leaveType?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
 
 @Injectable()
 export class ReportsService {
   constructor(private prisma: PrismaService) {}
+
+  async getReportRecords(filters: ReportFilters = {}) {
+    const where: Prisma.LeaveRequestWhereInput = {};
+
+    const search = filters.search?.trim();
+    if (search && search.toLowerCase() !== "undefined") {
+      where.OR = [
+        { requestId: { contains: search, mode: "insensitive" } },
+        { employeeId: { contains: search, mode: "insensitive" } },
+        { employeeName: { contains: search, mode: "insensitive" } },
+        { employeeEmail: { contains: search, mode: "insensitive" } },
+        { reason: { contains: search, mode: "insensitive" } },
+        { otherNote: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const employeeId = filters.employeeId?.trim();
+    if (employeeId && employeeId.toLowerCase() !== "undefined") {
+      where.employeeId = employeeId.toUpperCase();
+    }
+
+    const status = filters.status?.trim();
+    if (status && status.toLowerCase() !== "undefined") {
+      if (!Object.values(LeaveStatus).includes(status as LeaveStatus)) {
+        throw new BadRequestException(`Invalid leave status '${status}'.`);
+      }
+      where.status = status as LeaveStatus;
+    }
+
+    const leaveType = filters.leaveType?.trim();
+    if (leaveType && leaveType.toLowerCase() !== "undefined") {
+      if (!Object.values(LeaveType).includes(leaveType as LeaveType)) {
+        throw new BadRequestException(`Invalid leave type '${leaveType}'.`);
+      }
+      where.leaveType = leaveType as LeaveType;
+    }
+
+    const dateFrom = this.parseReportDate(filters.dateFrom, false);
+    const dateTo = this.parseReportDate(filters.dateTo, true);
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+      throw new BadRequestException(
+        "The report start date must be on or before the end date.",
+      );
+    }
+
+    const dateOverlapFilters: Prisma.LeaveRequestWhereInput[] = [];
+    if (dateTo) dateOverlapFilters.push({ startDate: { lte: dateTo } });
+    if (dateFrom) dateOverlapFilters.push({ endDate: { gte: dateFrom } });
+    if (dateOverlapFilters.length) {
+      where.AND = dateOverlapFilters;
+    }
+
+    return this.prisma.leaveRequest.findMany({
+      where,
+      orderBy: { submittedAt: "desc" },
+      select: {
+        requestId: true,
+        employeeId: true,
+        employeeName: true,
+        employeeEmail: true,
+        employee: { select: { department: true, designation: true } },
+        leaveType: true,
+        otherNote: true,
+        startDate: true,
+        endDate: true,
+        duration: true,
+        numberOfDays: true,
+        reason: true,
+        status: true,
+        submittedAt: true,
+      },
+    });
+  }
+
+  private parseReportDate(
+    value: string | undefined,
+    endOfDay: boolean,
+  ): Date | undefined {
+    if (!value) return undefined;
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) {
+      throw new BadRequestException(
+        `Invalid report date '${value}'. Use YYYY-MM-DD.`,
+      );
+    }
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(
+      year,
+      month - 1,
+      day,
+      endOfDay ? 23 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 59 : 0,
+      endOfDay ? 999 : 0,
+    );
+    if (
+      date.getFullYear() !== year ||
+      date.getMonth() !== month - 1 ||
+      date.getDate() !== day
+    ) {
+      throw new BadRequestException(
+        `Invalid report date '${value}'. Use YYYY-MM-DD.`,
+      );
+    }
+    return date;
+  }
 
   async getAdminDashboardStats() {
     const today = new Date();
@@ -22,12 +139,20 @@ export class ReportsService {
       todayOnLeaveCount,
       recentPending,
     ] = await Promise.all([
-      this.prisma.employee.count(),
-      this.prisma.employee.count({ where: { status: EmployeeStatus.ACTIVE } }),
-      this.prisma.leaveRequest.count({ where: { status: LeaveStatus.PENDING } }),
-      this.prisma.leaveRequest.count({ where: { status: LeaveStatus.APPROVED } }),
-      this.prisma.leaveRequest.count({ where: { status: LeaveStatus.REJECTED } }),
-      this.prisma.leaveRequest.count({ where: { status: LeaveStatus.CANCELLED } }),
+      this.prisma.user.count(),
+      this.prisma.user.count({ where: { status: EmployeeStatus.ACTIVE } }),
+      this.prisma.leaveRequest.count({
+        where: { status: LeaveStatus.PENDING },
+      }),
+      this.prisma.leaveRequest.count({
+        where: { status: LeaveStatus.APPROVED },
+      }),
+      this.prisma.leaveRequest.count({
+        where: { status: LeaveStatus.REJECTED },
+      }),
+      this.prisma.leaveRequest.count({
+        where: { status: LeaveStatus.CANCELLED },
+      }),
       this.prisma.leaveRequest.count({
         where: {
           status: LeaveStatus.APPROVED,
@@ -37,7 +162,7 @@ export class ReportsService {
       }),
       this.prisma.leaveRequest.findMany({
         where: { status: LeaveStatus.PENDING },
-        orderBy: { submittedAt: 'desc' },
+        orderBy: { submittedAt: "desc" },
         take: 5,
       }),
     ]);
@@ -55,33 +180,35 @@ export class ReportsService {
   }
 
   async getEmployeeDashboardStats(employeeId: string) {
-    const employee = await this.prisma.employee.findUnique({
-      where: { employeeId },
-    });
-
-    const [totalRequests, pendingRequests, approvedRequests, rejectedRequests, cancelledRequests, recent] =
-      await Promise.all([
-        this.prisma.leaveRequest.count({ where: { employeeId } }),
-        this.prisma.leaveRequest.count({ where: { employeeId, status: LeaveStatus.PENDING } }),
-        this.prisma.leaveRequest.count({ where: { employeeId, status: LeaveStatus.APPROVED } }),
-        this.prisma.leaveRequest.count({ where: { employeeId, status: LeaveStatus.REJECTED } }),
-        this.prisma.leaveRequest.count({ where: { employeeId, status: LeaveStatus.CANCELLED } }),
-        this.prisma.leaveRequest.findMany({
-          where: { employeeId },
-          orderBy: { submittedAt: 'desc' },
-          take: 5,
-        }),
-      ]);
+    const [
+      totalRequests,
+      pendingRequests,
+      approvedRequests,
+      rejectedRequests,
+      cancelledRequests,
+      recent,
+    ] = await Promise.all([
+      this.prisma.leaveRequest.count({ where: { employeeId } }),
+      this.prisma.leaveRequest.count({
+        where: { employeeId, status: LeaveStatus.PENDING },
+      }),
+      this.prisma.leaveRequest.count({
+        where: { employeeId, status: LeaveStatus.APPROVED },
+      }),
+      this.prisma.leaveRequest.count({
+        where: { employeeId, status: LeaveStatus.REJECTED },
+      }),
+      this.prisma.leaveRequest.count({
+        where: { employeeId, status: LeaveStatus.CANCELLED },
+      }),
+      this.prisma.leaveRequest.findMany({
+        where: { employeeId },
+        orderBy: { submittedAt: "desc" },
+        take: 5,
+      }),
+    ]);
 
     return {
-      employee: {
-        employeeId: employee?.employeeId,
-        name: employee?.name,
-        email: employee?.email,
-        annualQuota: employee?.annualQuota || 12,
-        usedQuota: employee?.usedQuota || 0,
-        remainingQuota: Math.max(0, (employee?.annualQuota || 12) - (employee?.usedQuota || 0)),
-      },
       stats: {
         totalRequests,
         pendingRequests,
@@ -100,7 +227,10 @@ export class ReportsService {
       select: { leaveType: true, numberOfDays: true },
     });
 
-    const leaveTypeCounts: Record<string, { count: number; totalDays: number }> = {
+    const leaveTypeCounts: Record<
+      string,
+      { count: number; totalDays: number }
+    > = {
       CASUAL_LEAVE: { count: 0, totalDays: 0 },
       SICK_LEAVE: { count: 0, totalDays: 0 },
       EMERGENCY_LEAVE: { count: 0, totalDays: 0 },
@@ -131,7 +261,9 @@ export class ReportsService {
     });
 
     const monthlyTrends = Array.from({ length: 12 }, (_, i) => ({
-      month: new Date(currentYear, i, 1).toLocaleString('default', { month: 'short' }),
+      month: new Date(currentYear, i, 1).toLocaleString("default", {
+        month: "short",
+      }),
       monthIndex: i + 1,
       total: 0,
       approved: 0,
@@ -148,34 +280,34 @@ export class ReportsService {
     });
 
     // 3. Employee-wise Leave Breakdown
-    const employees = await this.prisma.employee.findMany({
+    const employees = await this.prisma.user.findMany({
       select: {
         employeeId: true,
         name: true,
         department: true,
-        annualQuota: true,
-        usedQuota: true,
         leaveRequests: {
           select: {
             status: true,
-            numberOfDays: true,
           },
         },
       },
     });
 
     const employeeSummary = employees.map((emp) => {
-      const approvedCount = emp.leaveRequests.filter((r) => r.status === LeaveStatus.APPROVED).length;
-      const pendingCount = emp.leaveRequests.filter((r) => r.status === LeaveStatus.PENDING).length;
-      const rejectedCount = emp.leaveRequests.filter((r) => r.status === LeaveStatus.REJECTED).length;
+      const approvedCount = emp.leaveRequests.filter(
+        (r) => r.status === LeaveStatus.APPROVED,
+      ).length;
+      const pendingCount = emp.leaveRequests.filter(
+        (r) => r.status === LeaveStatus.PENDING,
+      ).length;
+      const rejectedCount = emp.leaveRequests.filter(
+        (r) => r.status === LeaveStatus.REJECTED,
+      ).length;
 
       return {
         employeeId: emp.employeeId,
         name: emp.name,
         department: emp.department,
-        annualQuota: emp.annualQuota,
-        usedDays: emp.usedQuota,
-        remainingDays: Math.max(0, emp.annualQuota - emp.usedQuota),
         approvedCount,
         pendingCount,
         rejectedCount,
@@ -201,27 +333,35 @@ export class ReportsService {
 
     const leaves = await this.prisma.leaveRequest.findMany({
       where,
-      orderBy: { submittedAt: 'desc' },
+      orderBy: { submittedAt: "desc" },
     });
 
     // CSV Headers
     const headers = [
-      'Request ID',
-      'Employee ID',
-      'Employee Name',
-      'Employee Email',
-      'Leave Type',
-      'Start Date',
-      'End Date',
-      'Duration',
-      'Days',
-      'Status',
-      'Reason',
-      'Decided By',
-      'Decided At',
-      'Decision Method',
-      'Rejection Remarks',
+      "Request ID",
+      "Employee ID",
+      "Employee Name",
+      "Employee Email",
+      "Leave Type",
+      "Start Date",
+      "End Date",
+      "Duration",
+      "Days",
+      "Status",
+      "Reason",
+      "Decided By",
+      "Decided At",
+      "Decision Method",
+      "Rejection Remarks",
     ];
+
+    const toDDMMYYYY = (d: Date | null | undefined) => {
+      if (!d) return "";
+      const day = String(d.getDate()).padStart(2, "0");
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const year = d.getFullYear();
+      return `${day}/${month}/${year}`;
+    };
 
     const rows = leaves.map((l) => [
       l.requestId,
@@ -229,18 +369,18 @@ export class ReportsService {
       `"${l.employeeName.replace(/"/g, '""')}"`,
       l.employeeEmail,
       l.leaveType,
-      l.startDate.toISOString().split('T')[0],
-      l.endDate.toISOString().split('T')[0],
+      toDDMMYYYY(l.startDate),
+      toDDMMYYYY(l.endDate),
       l.duration,
       l.numberOfDays,
       l.status,
       `"${l.reason.replace(/"/g, '""')}"`,
-      `"${(l.decidedBy || '').replace(/"/g, '""')}"`,
-      l.decidedAt ? l.decidedAt.toISOString() : '',
-      l.decisionMethod || '',
-      `"${(l.rejectionRemarks || '').replace(/"/g, '""')}"`,
+      `"${(l.decidedBy || "").replace(/"/g, '""')}"`,
+      l.decidedAt ? toDDMMYYYY(l.decidedAt) : "",
+      l.decisionMethod || "",
+      `"${(l.rejectionRemarks || "").replace(/"/g, '""')}"`,
     ]);
 
-    return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    return [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
   }
 }

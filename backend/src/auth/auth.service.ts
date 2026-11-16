@@ -1,8 +1,13 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { LoginDto } from './dto/login.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Injectable()
 export class AuthService {
@@ -14,7 +19,7 @@ export class AuthService {
   async validateUser(identifier: string, pass: string) {
     const trimmed = identifier.trim();
     // Search by email or employeeId
-    const employee = await this.prisma.employee.findFirst({
+    const employee = await this.prisma.user.findFirst({
       where: {
         OR: [
           { email: { equals: trimmed, mode: 'insensitive' } },
@@ -44,25 +49,30 @@ export class AuthService {
     return this.generateTokenResponse(employee);
   }
 
-  async quickLogin(role: 'EMPLOYEE' | 'HR' | 'DIRECTOR') {
-    let email = '';
-    if (role === 'DIRECTOR') {
-      email = 'director@durozen.in';
-    } else if (role === 'HR') {
-      email = 'hr@durozen.in';
-    } else {
-      email = 'sarah.jenkins@durozen.in';
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { passwordHash: true },
+    });
+    if (!user) {
+      throw new UnauthorizedException('User account not found.');
     }
 
-    const employee = await this.prisma.employee.findFirst({
-      where: { email },
+    if (!(await bcrypt.compare(dto.currentPassword, user.passwordHash))) {
+      throw new BadRequestException('Current password is incorrect.');
+    }
+
+    if (await bcrypt.compare(dto.newPassword, user.passwordHash)) {
+      throw new BadRequestException('New password must be different from the current password.');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
     });
 
-    if (!employee) {
-      throw new BadRequestException(`Default ${role} account not found in database`);
-    }
-
-    return this.generateTokenResponse(employee);
+    return { message: 'Password changed successfully.' };
   }
 
   private generateTokenResponse(employee: any) {
@@ -86,15 +96,12 @@ export class AuthService {
         department: employee.department,
         designation: employee.designation,
         status: employee.status,
-        annualQuota: employee.annualQuota,
-        usedQuota: employee.usedQuota,
-        remainingQuota: Math.max(0, employee.annualQuota - employee.usedQuota),
       },
     };
   }
 
-  async getProfile(userId: number) {
-    const employee = await this.prisma.employee.findUnique({
+  async getProfile(userId: string) {
+    const employee = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
@@ -105,8 +112,6 @@ export class AuthService {
         status: true,
         department: true,
         designation: true,
-        annualQuota: true,
-        usedQuota: true,
         createdAt: true,
       },
     });
@@ -115,9 +120,6 @@ export class AuthService {
       throw new UnauthorizedException('User profile not found');
     }
 
-    return {
-      ...employee,
-      remainingQuota: Math.max(0, employee.annualQuota - employee.usedQuota),
-    };
+    return employee;
   }
 }

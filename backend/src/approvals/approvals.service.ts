@@ -8,7 +8,18 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ApprovalAction, DecideWithTokenDto, DecidePortalDto } from './dto/decision.dto';
-import { DecisionMethod, LeaveStatus, TokenStatus } from '@prisma/client';
+import { DecisionMethod, LeaveStatus, Role, TokenStatus } from '@prisma/client';
+
+function formatDDMMYYYYTime(val: Date | null | undefined): string {
+  if (!val) return '';
+  const day = String(val.getDate()).padStart(2, '0');
+  const month = String(val.getMonth() + 1).padStart(2, '0');
+  const year = val.getFullYear();
+  const hours = String(val.getHours()).padStart(2, '0');
+  const minutes = String(val.getMinutes()).padStart(2, '0');
+  const seconds = String(val.getSeconds()).padStart(2, '0');
+  return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
+}
 
 @Injectable()
 export class ApprovalsService {
@@ -17,7 +28,7 @@ export class ApprovalsService {
     private notificationsService: NotificationsService,
   ) {}
 
-  async verifyToken(token: string) {
+  async verifyToken(token: string, currentUser: any) {
     if (!token) throw new BadRequestException('Verification token is required');
 
     const tokenRecord = await this.prisma.approvalToken.findUnique({
@@ -30,6 +41,7 @@ export class ApprovalsService {
     if (!tokenRecord) {
       throw new NotFoundException('Invalid or unknown approval token.');
     }
+    this.assertTokenApprover(tokenRecord.approverId, currentUser);
 
     const isExpired = new Date() > tokenRecord.expiresAt;
     const isPending = tokenRecord.leaveRequest.status === LeaveStatus.PENDING;
@@ -48,7 +60,7 @@ export class ApprovalsService {
     };
   }
 
-  async decideWithToken(dto: DecideWithTokenDto) {
+  async decideWithToken(dto: DecideWithTokenDto, currentUser: any) {
     const tokenRecord = await this.prisma.approvalToken.findUnique({
       where: { tokenHash: dto.token },
       include: { leaveRequest: true },
@@ -57,10 +69,11 @@ export class ApprovalsService {
     if (!tokenRecord) {
       throw new NotFoundException('Invalid decision token.');
     }
+    this.assertTokenApprover(tokenRecord.approverId, currentUser);
 
     if (tokenRecord.status !== TokenStatus.ACTIVE) {
       throw new BadRequestException(
-        `This decision token has already been ${tokenRecord.status.toLowerCase()}. It cannot be reused (TC-17).`,
+        `This decision token has already been ${tokenRecord.status.toLowerCase()}. It cannot be reused.`,
       );
     }
 
@@ -86,7 +99,7 @@ export class ApprovalsService {
       if (currentLeave.status !== LeaveStatus.PENDING) {
         // Another approver already decided!
         throw new ConflictException(
-          `Decision conflict: Request ${currentLeave.requestId} was already decided as '${currentLeave.status}' by ${currentLeave.decidedBy || 'another approver'} on ${currentLeave.decidedAt?.toLocaleString()}. Further actions are rejected (BR-11, BR-12).`,
+          `Decision conflict: Request ${currentLeave.requestId} was already decided as '${currentLeave.status}' by ${currentLeave.decidedBy || 'another approver'} on ${formatDDMMYYYYTime(currentLeave.decidedAt)}. Further actions are rejected.`,
         );
       }
 
@@ -94,7 +107,7 @@ export class ApprovalsService {
       const finalStatus = isApprove ? LeaveStatus.APPROVED : LeaveStatus.REJECTED;
 
       const approverName =
-        tokenRecord.approverEmail.includes('director') ? 'Director' : 'HR Administrator';
+        currentUser.role === Role.DIRECTOR ? 'Director' : 'HR Administrator';
 
       // 1. Mark this token as USED
       await tx.approvalToken.update({
@@ -121,23 +134,13 @@ export class ApprovalsService {
         where: { requestId: tokenRecord.requestId },
         data: {
           status: finalStatus,
-          decidedBy: `${approverName} (${tokenRecord.approverEmail})`,
-          decidedByEmail: tokenRecord.approverEmail,
+          decidedBy: `${approverName} (${currentUser.email})`,
+          decidedByEmail: currentUser.email,
           decidedAt: new Date(),
           decisionMethod: DecisionMethod.EMAIL,
           rejectionRemarks: !isApprove ? dto.rejectionRemarks?.trim() || 'Not specified' : null,
         },
       });
-
-      // 4. If approved, update employee's used leave quota
-      if (isApprove) {
-        await tx.employee.update({
-          where: { employeeId: updatedLeave.employeeId },
-          data: {
-            usedQuota: { increment: updatedLeave.numberOfDays },
-          },
-        });
-      }
 
       return { updatedLeave, approverName };
     });
@@ -157,7 +160,7 @@ export class ApprovalsService {
 
   async decidePortal(requestId: string, dto: DecidePortalDto, currentUser: any) {
     if (currentUser.role !== 'HR' && currentUser.role !== 'DIRECTOR') {
-      throw new ForbiddenException('Only HR and Director can decide leave requests (TC-16).');
+      throw new ForbiddenException('Only HR and Director can decide leave requests.');
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
@@ -198,15 +201,6 @@ export class ApprovalsService {
         },
       });
 
-      if (isApprove) {
-        await tx.employee.update({
-          where: { employeeId: updatedLeave.employeeId },
-          data: {
-            usedQuota: { increment: updatedLeave.numberOfDays },
-          },
-        });
-      }
-
       return { updatedLeave, approverDisplayName };
     });
 
@@ -220,5 +214,13 @@ export class ApprovalsService {
       .catch((err) => console.error('Error sending portal decision notification:', err));
 
     return result.updatedLeave;
+  }
+
+  private assertTokenApprover(approverId: string, currentUser: any) {
+    if (approverId !== currentUser.employeeId) {
+      throw new ForbiddenException(
+        'This approval link is assigned to another account. Sign in with the authorized approver account.',
+      );
+    }
   }
 }
