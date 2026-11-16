@@ -8,6 +8,7 @@ node_modules/
 /frontend/out/
 /coverage/
 *.tsbuildinfo
+/scratch/
 
 # Local environment files
 .env

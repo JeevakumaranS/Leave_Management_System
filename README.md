@@ -1,103 +1,273 @@
 # Durozen Technologies - Employee Leave Management System
 
-A centralized, secure, enterprise-grade Employee Leave Management System built strictly according to the **Software Requirements Specification (SRS v1.0)** for **Durozen Technologies Private Limited**.
+A centralized, modern, enterprise-grade Employee Leave Management System developed for **Durozen Technologies**. The platform streamlines leave applications, provides a dual-authority approval workflow for Directors and HR Administrators, automatically tracks leave quotas, and dispatches instant email notifications.
 
 ---
 
 ## 🛠️ Technology Stack
-- **Frontend**: Next.js 15 (React 19, App Router)
-- **Primary Typography**: **Montserrat** with `sans-serif` fallback (per design system specifications)
+
+- **Frontend**: Next.js 15 (React 19, App Router, TypeScript)
 - **Backend**: NestJS (TypeScript, Modular Architecture)
-- **Database**: PostgreSQL (port 5432, database: `durozen_leave_db`)
+- **Database**: PostgreSQL
 - **ORM**: Prisma Client v6
 - **Authentication**: JWT & Role-Based Access Control (RBAC) with bcrypt password hashing
+- **Email Notifications**: Google Apps Script Web App Integration
+- **Containerization**: Docker & Docker Compose
 
 ---
 
-## 👥 Demo User Accounts (Pre-Seeded)
-All accounts use password: `Password@123`
+## ✨ Key Features
 
-| Role | Employee ID | Email | Permissions & Purpose |
-| :--- | :--- | :--- | :--- |
-| **Director** | `DIR-001` | `director@example.test` | Executive Approver, Full Employee & Leave Management, Analytics |
-| **HR Administrator** | `HR-001` | `hr@example.test` | HR Approver, Employee Directory Management, Approvals, Reports |
-| **Employee** | `EMP-101` | `sarah.jenkins@example.test` | Active Employee (Engineering): Apply Leave, View History, Cancel Pending |
-| **Employee** | `EMP-102` | `rajesh.kumar@example.test` | Active Employee (Frontend): Leave tracking |
-| **Inactive Employee** | `EMP-105` | `michael.scott@example.test` | Deactivated account (used to verify BR-04 & TC-19 access block) |
-
----
-
-## 📋 SRS Requirements & Feature Matrix
-
-### 1. User Roles and Access Control (SRS Section 2)
-- **Employee**: Secure login, apply for leave, view own leave history, check status, cancel pending leaves.
-- **HR & Director**: Administrative dashboards, review leave queues, approve/reject requests, employee directory CRUD, activate/deactivate accounts, company calendar, executive analytics.
-- **Role Permission Matrix**: Strict server-side route guards enforcing RBAC (BR-01 to BR-16).
-
-### 2. Employee Management Module (SRS Section 3)
-- **Add Employee**: Unique Employee ID, Name, Email, Department, Designation, and Status.
-- **Dynamic Dropdown**: Newly created employees automatically appear in the leave application form dropdowns without manual updates (SRS 3.3).
-- **Soft Deactivation**: Historical employee records are preserved; deactivation blocks logins and leave submissions while preserving leave history (BR-16).
-
-### 3. Leave Application Module (SRS Section 4)
-- **Dynamic Field Consistency**: Selecting either Employee ID or Name automatically populates the other and sets the registered email (SRS 4.2).
-- **Manager Email ID**: Dropdown populated from active HR and Director accounts in the database (SRS 4.3).
-- **Leave Categories**: Casual Leave (PL), Sick Leave, Emergency Leave, Other. Selecting "Other" dynamically shows and mandates the "Other Leave Note" field (SRS 4.4, BR-08).
-- **Strict Date & Duration Validation**:
-  - End Date must be $\ge$ Start Date (BR-05).
-  - Half-day leave allowed **only** when Start Date and End Date are identical (BR-06).
-  - Multi-day selections permit only Full Day (SRS 4.5).
-  - Real-time client and server validation.
-
-### 4. Dual Approver Workflow & Critical Security (SRS Section 5, 6, 12)
-- **Dual Routing**: Both Director and HR receive every leave request.
-- **Atomic Decision**: Either Director or HR can approve or reject; both approvals are not required. The first valid decision becomes final (BR-11, BR-12).
-- **Link Invalidation**: Once decided, any subsequent attempt by the other approver is safely rejected with "Already Decided" and full audit metadata (TC-13).
-- **Rejection Remarks**: Mandatory explanatory remarks entered by the approver and recorded in the audit trail (SRS 6.3).
-- **Email Action Gateway (`/decision?token=...`)**: Token verification and approver confirmation prevents unauthorized public action links (SRS Section 12).
-
-### 5. Notifications & Audit Logs (SRS Section 6, 10.5)
-- Notification logs table recording `notification_id`, `request_id`, `recipient_email`, `notification_type`, `delivery_status`, and timestamps.
-- Built-in notification log viewer and retry action for failed dispatches.
-
-### 6. Leave Calendar & Analytics (SRS Section 7, 8, 9)
-- Interactive monthly company leave calendar.
-- Monthly trend charts and Leave-type utilization breakdown.
-- 1-Click CSV export.
+- **Employee Portal**:
+  - Submit leave applications with date pickers, duration options (Full Day / Half Day), and leave categories (Casual, Sick, Emergency, Other).
+  - Real-time leave balance and remaining quota indicators.
+  - Track application status in real-time (Pending, Approved, Rejected, Cancelled).
+  - Ability to cancel pending applications before a decision is made.
+- **Director & HR Management**:
+  - Unified pending queue with one-click approval and rejection with mandatory remarks.
+  - **Dual-Authority Workflow**: Both Director and HR receive every leave application; the first valid decision recorded becomes final and updates across the platform.
+  - Full Employee Directory CRUD with soft activation/deactivation.
+  - Interactive Company Leave Calendar showing approved employee leaves.
+  - Analytics & Reports with date/department filtering and 1-click CSV export.
+- **Secure Email Notifications**:
+  - Instant automated emails dispatched to approvers and employees for requests, approvals, and rejections.
+  - One-click secure token authorization links for fast review.
 
 ---
 
-## 🚀 Running the System
+## 💻 Local Setup Guide
 
-### Development mode
-Run the application from the repository root with automatic backend restarts and frontend hot reload on source changes:
+### 1. Prerequisites
+- **Node.js**: v18.x or v20.x or higher
+- **npm**: v9.x or higher
+- **PostgreSQL**: Running locally on port `5432`
+
+---
+
+### 2. Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone <repository-url>
+   cd Leave_Management_System
+   ```
+
+2. **Install root dependencies**:
+   ```bash
+   npm install
+   ```
+
+3. **Install backend dependencies**:
+   ```bash
+   cd backend
+   npm install
+   cd ..
+   ```
+
+4. **Install frontend dependencies**:
+   ```bash
+   cd frontend
+   npm install
+   cd ..
+   ```
+
+---
+
+### 3. Environment Configuration
+
+1. **Backend Environment** (`backend/.env`):
+   Create `backend/.env` (copy from `backend/.env.example`):
+   ```env
+   PORT=4000
+   DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@localhost:5432/durozen_leave_db"
+   JWT_SECRET="your-secure-jwt-secret-key-at-least-32-chars"
+   JWT_EXPIRES_IN_MINUTES=10080
+   APP_URL="http://localhost:3000"
+
+   # Email service (Google Apps Script)
+   APPSCRIPT_ENABLED=false
+   APPSCRIPT_WEB_APP_URL=""
+   APPSCRIPT_SHARED_SECRET=""
+   ```
+
+2. **Frontend Environment** (`frontend/.env.local`):
+   Create `frontend/.env.local` (copy from `frontend/.env.example`):
+   ```env
+   NEXT_PUBLIC_API_URL="http://localhost:4000/api"
+   ```
+
+---
+
+### 4. Database Setup
+
+From the `backend` folder, generate the Prisma client and apply database migrations:
+
+```bash
+cd backend
+npx prisma generate
+npx prisma migrate dev --name init
+cd ..
+```
+
+After migrating the database, create your initial Director administrator account using the interactive CLI:
+```bash
+npm run create:director
+```
+
+---
+
+### 5. Running the Application
+
+You can start both backend and frontend simultaneously with hot-reload from the root directory:
+
 ```bash
 npm run dev
 ```
-The watcher monitors application source code. Changes to environment files, dependencies, or the Prisma schema still require the appropriate restart, install, or Prisma client generation.
 
-Use `npm start` to run the prebuilt production backend and frontend.
+Alternatively, run each service in separate terminals:
 
-### Backend (NestJS)
-Configure `backend/.env` using `backend/.env.example`, including `PORT`, `DATABASE_URL`, and `JWT_SECRET`.
-To create a Director account without resetting existing database data, run `npm run create:director` from the `backend` directory and follow the prompts. The password is entered without being displayed.
+- **Backend** (NestJS):
+  ```bash
+  cd backend
+  npm run start:dev
+  # API running at http://localhost:4000/api
+  ```
+
+- **Frontend** (Next.js):
+  ```bash
+  cd frontend
+  npm run dev
+  # Web application running at http://localhost:3000
+  ```
+
+---
+
+## 🐳 Docker Setup Guide
+
+The application includes a production-ready `compose.yaml` setup containing PostgreSQL, NestJS API, and the Next.js frontend.
+
+### 1. Configure Docker Environment Files
+
+1. Create the root `.env` file from `.env.example`:
+   ```bash
+   cp .env.example .env
+   ```
+   Edit `.env`:
+   ```env
+   POSTGRES_DB=durozen_leave_db
+   POSTGRES_USER=durozen
+   POSTGRES_PASSWORD=your_secure_db_password
+   FRONTEND_PORT=3000
+   BACKEND_PORT=4000
+   APP_URL=http://localhost:3000
+   NEXT_PUBLIC_API_URL=http://localhost:4000/api
+   ```
+
+2. Ensure `backend/.env` has a strong `JWT_SECRET`:
+   ```env
+   JWT_SECRET="your-strong-production-jwt-secret"
+   ```
+
+### 2. Build and Start the Containers
+
+Run Docker Compose from the root directory:
+
 ```bash
-cd backend
-npm run build
-node dist/src/main.js
+docker compose up --build -d
 ```
 
-### Frontend (Next.js)
-Configure `frontend/.env.local` with `NEXT_PUBLIC_API_URL`, using `frontend/.env.example` as a template.
+### 3. Verify Container Status & Logs
+
+Check container health:
 ```bash
-cd frontend
-npm run build
-npm start
+docker compose ps
 ```
 
-### Docker Compose
-Copy the root `.env.example` to `.env`, then copy `backend/.env.example` to `backend/.env`. Set a URL-safe PostgreSQL password in the root `.env` and a strong `JWT_SECRET` in `backend/.env`.
+View live logs:
 ```bash
-docker compose up --build
+docker compose logs -f
 ```
-The frontend is available at `http://localhost:3000` and the API at `http://localhost:4000/api`. The backend applies Prisma migrations before starting, and PostgreSQL data is kept in the `postgres-data` volume. Configure `APP_URL` and `NEXT_PUBLIC_API_URL` in the root `.env` to match the public frontend and API addresses before deployment. Do not use sample credentials in production.
+
+- **Frontend**: Accessible at `http://localhost:3000`
+- **Backend API**: Accessible at `http://localhost:4000/api`
+- **Database Volume**: Data is stored persistently in the `postgres-data` Docker volume.
+
+### 4. Stopping Containers
+
+```bash
+docker compose down
+```
+*(To stop and remove database volumes, use `docker compose down -v`)*
+
+---
+
+## 🔐 How to Create Director Accounts
+
+The system includes a secure, interactive CLI tool to create Director accounts without resetting existing database data or exposing passwords in shell history.
+
+### Option A: Running from Local Terminal
+
+From the root project directory, run:
+```bash
+npm run create:director
+```
+*(Or navigate to `cd backend && npm run create:director`)*
+
+### Option B: Running inside Docker Container
+
+If running with Docker Compose:
+```bash
+docker compose exec -it backend npm run create:director
+```
+
+### Interactive Prompts:
+The script will prompt you for:
+1. **Director full name**: e.g. `John Doe`
+2. **Employee ID**: e.g. `DIR-002` (automatically formatted in uppercase)
+3. **Email**: e.g. `johndoe@durozen.com` (validated format)
+4. **Department**: Default is `Executive Management` (press Enter to accept default)
+5. **Designation**: Default is `Director` (press Enter to accept default)
+6. **Password (hidden)**: Enter a secure password (minimum 12 characters; characters are masked)
+7. **Confirm password**: Re-enter password for verification
+8. **Confirmation**: Type `y` or `yes` to finalize creation.
+
+Once created, the new Director can immediately sign in at `http://localhost:3000/login` using either their **Email** or **Employee ID**.
+
+---
+
+## 📁 Project Directory Structure
+
+```text
+Leave_Management_System/
+├── backend/                  # NestJS backend API
+│   ├── prisma/               # Prisma schema and database migrations
+│   ├── src/
+│   │   ├── approvals/        # Dual-authority review and decision logic
+│   │   ├── auth/             # JWT auth, login, RBAC guards, password change
+│   │   ├── cli/              # CLI tools (create-director.ts)
+│   │   ├── employees/        # Employee management CRUD & directory
+│   │   ├── leaves/           # Leave application, cancellation, quota calculations
+│   │   ├── notifications/    # Transactional email service & audit logs
+│   │   └── reports/          # Admin stats, calendar events, CSV exports
+│   └── Dockerfile            # Backend Docker image specification
+├── frontend/                 # Next.js 15 client
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── admin/        # Admin views (employees, leaves, pending, reports)
+│   │   │   ├── apply-leave/  # Leave submission form
+│   │   │   ├── calendar/     # Interactive company leave calendar
+│   │   │   ├── dashboard/    # Responsive employee & admin dashboard
+│   │   │   ├── decision/     # Token authorization decision portal
+│   │   │   └── login/        # Responsive authentication page
+│   │   └── components/       # Reusable components (Navbar, Sidebar, Modals)
+│   └── Dockerfile            # Frontend Docker image specification
+├── scripts/                  # Development orchestration scripts
+├── compose.yaml              # Docker Compose multi-service definition
+└── README.md                 # Project documentation
+```
+
+---
+
+## 📄 License
+
+This software is proprietary and confidential to **Durozen Technologies Private Limited**.

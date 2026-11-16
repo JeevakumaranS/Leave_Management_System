@@ -10,7 +10,7 @@
     "dev:backend": "cd backend && npm run start:dev",
     "start:frontend": "cd frontend && npx next start",
     "dev:frontend": "cd frontend && npx next dev",
-    "test:srs": "node scratch/test-suite.js"
+    "create:director": "cd backend && npm run create:director"
   },
   "devDependencies": {
     "axios": "^1.21.1"
