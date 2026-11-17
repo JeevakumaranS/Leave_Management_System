@@ -130,7 +130,7 @@ export default function ApplyLeavePage() {
     if (!leaveType) errors.push('Leave Type is mandatory.');
 
     if (leaveType === 'OTHER') {
-      const otherNoteError = getReasonTextError(otherNote, 'Other Leave Note');
+      const otherNoteError = getReasonTextError(otherNote, 'Other Leave Note', 25);
       if (otherNoteError) errors.push(otherNoteError);
     }
 
@@ -413,11 +413,11 @@ export default function ApplyLeavePage() {
                       onChange={(e) => setOtherNote(e.target.value)}
                       onBlur={(e) => setOtherNote(normalizeReasonText(e.target.value))}
                       minLength={3}
-                      maxLength={250}
+                      maxLength={25}
                       autoFocus
                     />
                     <div className="form-helper" style={{ color: '#D49422' }}>
-                      Enter 3–250 characters using letters, numbers, spaces, or basic punctuation.
+                      Enter 3–25 characters using letters, numbers, spaces, or basic punctuation.
                     </div>
                   </div>
                 )}
@@ -541,7 +541,7 @@ export default function ApplyLeavePage() {
               )}
 
               {/* Form Action */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <div className="leave-form-actions">
                 <button
                   type="button"
                   onClick={() => router.push('/dashboard')}

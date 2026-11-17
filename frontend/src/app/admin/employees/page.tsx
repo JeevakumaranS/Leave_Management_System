@@ -223,7 +223,7 @@ export default function EmployeeManagementPage() {
               </p>
             </div>
 
-            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '10px' }}>
+            <div className="employee-management-actions">
               <button onClick={() => loadEmployees()} className="btn btn-secondary btn-sm" title="Refresh">
                 <RefreshIcon size={14} /> Refresh
               </button>

@@ -9,7 +9,10 @@ import {
 
 const REASON_TEXT_PATTERN = /^[\p{L}\p{N} .,!?'"():;\/-]+$/u;
 
-export function IsReasonText(label: string): PropertyDecorator {
+export function IsReasonText(
+  label: string,
+  maxLength = 250,
+): PropertyDecorator {
   return (target, propertyKey) => {
     Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))(
       target,
@@ -21,7 +24,9 @@ export function IsReasonText(label: string): PropertyDecorator {
       target,
       propertyKey,
     );
-    MaxLength(250, { message: `${label} must be no more than 250 characters.` })(
+    MaxLength(maxLength, {
+      message: `${label} must be no more than ${maxLength} characters.`,
+    })(
       target,
       propertyKey,
     );

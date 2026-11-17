@@ -186,6 +186,7 @@ export class ReportsService {
       approvedRequests,
       rejectedRequests,
       cancelledRequests,
+      takenLeaveDays,
       recent,
     ] = await Promise.all([
       this.prisma.leaveRequest.count({ where: { employeeId } }),
@@ -201,6 +202,10 @@ export class ReportsService {
       this.prisma.leaveRequest.count({
         where: { employeeId, status: LeaveStatus.CANCELLED },
       }),
+      this.prisma.leaveRequest.aggregate({
+        where: { employeeId, status: LeaveStatus.APPROVED },
+        _sum: { numberOfDays: true },
+      }),
       this.prisma.leaveRequest.findMany({
         where: { employeeId },
         orderBy: { submittedAt: "desc" },
@@ -215,6 +220,7 @@ export class ReportsService {
         approvedRequests,
         rejectedRequests,
         cancelledRequests,
+        takenLeaveDays: takenLeaveDays._sum.numberOfDays ?? 0,
       },
       recentApplications: recent,
     };

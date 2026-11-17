@@ -9,7 +9,7 @@ node_modules/
 /coverage/
 *.tsbuildinfo
 /scratch/
-
+loadtest.js
 # Local environment files
 .env
 .env.*

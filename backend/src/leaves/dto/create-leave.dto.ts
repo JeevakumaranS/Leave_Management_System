@@ -24,7 +24,7 @@ export class CreateLeaveDto {
   leaveType: LeaveType;
 
   @ValidateIf((dto: CreateLeaveDto) => dto.leaveType === LeaveType.OTHER || dto.otherNote !== undefined)
-  @IsReasonText('Other Leave Note')
+  @IsReasonText('Other Leave Note', 25)
   otherNote?: string;
 
   @IsNotEmpty({ message: 'Start Date is mandatory' })

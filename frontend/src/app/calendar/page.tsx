@@ -156,11 +156,11 @@ export default function CalendarPage() {
           </div>
 
           <div className="card calendar-card" style={{ padding: '20px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-              <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#15213a' }}>
+            <div className="calendar-month-heading">
+              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#15213a' }}>
                 {monthNames[month]} {year}
               </h2>
-              <div style={{ fontSize: '13px', color: '#64748b' }}>
+              <div className="calendar-month-summary">
                 {user?.role === 'EMPLOYEE' ? 'Your' : 'Total'} <strong>{leaves.length}</strong> approved leave periods in {monthNames[month]}
               </div>
             </div>

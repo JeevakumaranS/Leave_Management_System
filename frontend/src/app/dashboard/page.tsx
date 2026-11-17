@@ -57,6 +57,14 @@ export default function DashboardPage() {
         setAdminStats(stats);
       } else {
         const stats = await api.reports.getEmployeeStats();
+        if (typeof stats.stats.takenLeaveDays !== 'number') {
+          const leaves = await api.leaves.getMyLeaves();
+          stats.stats.takenLeaveDays = leaves.reduce(
+            (total: number, leave: any) =>
+              leave.status === 'APPROVED' ? total + Number(leave.numberOfDays ?? 0) : total,
+            0,
+          );
+        }
         setEmpStats(stats);
       }
     } catch (err: any) {
@@ -314,7 +322,7 @@ export default function DashboardPage() {
           empStats && (
             <>
               {/* Status Metrics */}
-              <div className="live-metrics">
+              <div className="live-metrics employee-live-metrics">
                 <div className="metric blue">
                   <div className="metric-info">
                     <p>Total Submitted</p>
@@ -345,6 +353,17 @@ export default function DashboardPage() {
                   </div>
                   <span>
                     <CheckIcon size={18} />
+                  </span>
+                </div>
+
+                <div className="metric teal">
+                  <div className="metric-info">
+                    <p>Taken Leaves</p>
+                    <h2 style={{ color: '#287c78' }}>{empStats.stats.takenLeaveDays ?? 0}</h2>
+                    <small>Approved leave days</small>
+                  </div>
+                  <span>
+                    <CalendarIcon size={18} />
                   </span>
                 </div>
 

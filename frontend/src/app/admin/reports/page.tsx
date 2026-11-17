@@ -9,7 +9,7 @@ import { Sidebar } from '../../../components/Sidebar';
 import { Navbar } from '../../../components/Navbar';
 import { AnimatedSelect } from '../../../components/AnimatedSelect';
 import { PAGE_SIZE, PaginationControls } from '../../../components/PaginationControls';
-import { DownloadIcon, RefreshIcon, SearchIcon, XIcon } from '../../../components/Icons';
+import { ChevronDownIcon, FileExportIcon, FilterIcon, RefreshIcon, SearchIcon, XIcon } from '../../../components/Icons';
 import { formatDate, formatDateTime } from '../../../lib/date';
 import { useLiveDataRefresh } from '../../../lib/use-live-data-refresh';
 
@@ -231,6 +231,7 @@ export default function ReportsPage() {
   errorRef.current = error;
   const [activeView, setActiveView] = useState<ReportView>('EMPLOYEE');
   const [filters, setFilters] = useState<ReportFilters>(initialFilters);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [records, setRecords] = useState<ReportRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -240,6 +241,7 @@ export default function ReportsPage() {
   const forcedStatus = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].includes(activeView)
     ? activeView
     : '';
+  const activeFilterCount = Object.values(filters).filter((value) => value.trim()).length;
   const reportQueryKey = JSON.stringify({
     status: forcedStatus || filters.status,
     leaveType: filters.leaveType,
@@ -411,7 +413,30 @@ export default function ReportsPage() {
                 Search, filter, sort, and export HR and Director leave reports.
               </p>
             </div>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div className="reports-header-actions">
+              <button
+                type="button"
+                onClick={() => setFiltersOpen((open) => !open)}
+                className="btn btn-secondary btn-sm reports-filter-toggle"
+                aria-expanded={filtersOpen}
+                aria-controls="reports-filters"
+                title={activeFilterCount ? `${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'} applied` : 'Toggle filters'}
+              >
+                <FilterIcon size={15} />
+                Filters
+                {activeFilterCount > 0 && (
+                  <span className="reports-filter-badge" aria-label={`${activeFilterCount} filters applied`}>
+                    {activeFilterCount}
+                  </span>
+                )}
+                <ChevronDownIcon
+                  size={14}
+                  style={{
+                    transform: filtersOpen ? 'rotate(180deg)' : undefined,
+                    transition: 'transform 150ms ease',
+                  }}
+                />
+              </button>
               <button
                 type="button"
                 onClick={() => setRefreshKey((current) => current + 1)}
@@ -420,12 +445,12 @@ export default function ReportsPage() {
                 <RefreshIcon size={14} /> Refresh
               </button>
               <button type="button" onClick={exportCsv} className="btn btn-teal btn-sm" disabled={loading}>
-                <DownloadIcon size={16} /> Export CSV (Excel-compatible)
+                <FileExportIcon size={16} /> Export CSV
               </button>
             </div>
           </div>
 
-          <section className="card" style={{ marginBottom: 18 }}>
+          {filtersOpen && <section id="reports-filters" className="card reports-filters-card" style={{ marginBottom: 18 }}>
             <div style={{ overflowX: 'auto', padding: 12 }}>
               <div className="reports-filter-grid">
               <label>
@@ -446,26 +471,15 @@ export default function ReportsPage() {
               </label>
               <label>
                 <span className="form-label">Search</span>
-                <div style={{ position: 'relative' }}>
-                  <SearchIcon
-                    size={15}
-                    color="#758195"
-                    style={{
-                      position: 'absolute',
-                      left: 12,
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      pointerEvents: 'none',
-                    }}
-                  />
+                <div className="reports-search-field">
+                  <SearchIcon size={16} color="#758195" className="reports-search-icon" />
                   <input
                     className="form-input"
                     value={filters.search}
-                    placeholder="Employee ID, name, designation, department..."
+                    placeholder="Search employee, ID, designation, or department"
                     onChange={(event) =>
                       setFilters((current) => ({ ...current, search: event.target.value }))
                     }
-                    style={{ paddingLeft: 36, minWidth: 0 }}
                   />
                 </div>
               </label>
@@ -532,7 +546,7 @@ export default function ReportsPage() {
               </button>
               </div>
             </div>
-          </section>
+          </section>}
 
           <section className="card">
             <div className="table-container">
