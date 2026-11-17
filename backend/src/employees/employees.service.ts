@@ -246,14 +246,6 @@ export class EmployeesService {
         await transaction.leaveRequest.deleteMany({
           where: { employeeId: employee.employeeId },
         });
-        await transaction.approver.deleteMany({
-          where: {
-            OR: [
-              { approverId: employee.employeeId },
-              { email: employee.email },
-            ],
-          },
-        });
         await transaction.user.delete({ where: { id: employee.id } });
       });
     } catch (error) {
